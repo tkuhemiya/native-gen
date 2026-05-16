@@ -17,25 +17,25 @@ export function PlatformExportNode(props: NodeProps<AppNode>) {
   if (data.kind !== "platformExport") return null;
 
   return (
-    <div className="min-w-[260px] rounded-lg border border-border bg-card px-3 py-2 text-card-foreground shadow-sm">
-      <div className="relative mb-6 flex items-center justify-center">
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          Platform pack
-        </span>
+    <div className="relative min-w-[260px] rounded-lg border border-border bg-card px-3 py-2 text-card-foreground shadow-sm">
+      <div className="relative mb-2 h-11 w-full">
         <Handle
           type="target"
           position={Position.Left}
           id="text"
-          style={{ top: "35%" }}
-          className="!h-3 !w-3 !border-2 !border-card !bg-emerald-500"
+          style={{ top: 10 }}
+          className="z-10 !h-3 !w-3 !-translate-y-1/2 !border-2 !border-card !bg-emerald-500"
         />
         <Handle
           type="target"
           position={Position.Left}
           id="image"
-          style={{ top: "65%" }}
-          className="!h-3 !w-3 !border-2 !border-card !bg-sky-500"
+          style={{ top: 34 }}
+          className="z-10 !h-3 !w-3 !-translate-y-1/2 !border-2 !border-card !bg-sky-500"
         />
+        <span className="pointer-events-none absolute inset-0 flex items-center justify-center text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Output
+        </span>
       </div>
       <p className="mb-1 text-[10px] text-muted-foreground">
         Top: copy · Bottom: master image
