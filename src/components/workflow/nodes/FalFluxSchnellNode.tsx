@@ -2,6 +2,10 @@
 
 import { Handle, Position, useReactFlow, type NodeProps } from "@xyflow/react";
 import {
+  useNodeRunOutput,
+  useWorkflowRunContext,
+} from "@/components/workflow/WorkflowRunContext";
+import {
   FAL_FLUX_IMAGE_SIZE_DIMENSIONS,
   FAL_FLUX_IMAGE_SIZE_LABELS,
   type FalFluxPresetSize,
@@ -29,11 +33,18 @@ const STEPS_TOOLTIP =
 export function FalFluxSchnellNode(props: NodeProps<AppNode>) {
   const { data, id } = props;
   const { updateNodeData } = useReactFlow();
+  const runOut = useNodeRunOutput(id);
+  const { activeNodeId, phase } = useWorkflowRunContext();
+  const runningHere = phase === "running" && activeNodeId === id;
 
   if (data.kind !== "falFluxSchnell") return null;
 
   return (
-    <div className="min-w-[260px] max-w-[320px] rounded-lg border border-border bg-card px-3 py-2 text-card-foreground shadow-sm">
+    <div
+      className={`min-w-[260px] max-w-[320px] rounded-lg border border-border bg-card px-3 py-2 text-card-foreground shadow-sm${
+        runningHere ? " ring-2 ring-primary ring-offset-2 ring-offset-background" : ""
+      }`}
+    >
       <div className="mb-2 flex items-center justify-between gap-2">
         <Handle
           type="target"
@@ -99,6 +110,17 @@ export function FalFluxSchnellNode(props: NodeProps<AppNode>) {
           />
         </label>
       </div>
+      {runOut?.type === "image" ? (
+        <div className="mt-2 border-t border-border pt-2">
+          <p className="mb-1 text-[9px] font-medium text-muted-foreground">Result</p>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={runOut.url}
+            alt=""
+            className="max-h-44 w-full rounded-md border border-border object-contain"
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

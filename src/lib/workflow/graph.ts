@@ -90,6 +90,63 @@ export function topologicalOrder(
   return ordered;
 }
 
+/**
+ * Same as topological order for a DAG, but when several nodes are runnable,
+ * prefers smaller `position.x` (then `y`, then id) so execution aligns with a
+ * typical left-to-right canvas layout without breaking dependencies.
+ */
+export function topologicalOrderPreferLeft(
+  nodes: WorkflowNode[],
+  edges: WorkflowEdge[],
+): string[] {
+  if (hasCycle(nodes, edges)) {
+    throw new GraphError("Workflow has a cycle — only DAGs are supported");
+  }
+
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const { incoming, outgoing, ids } = buildAdjacency(nodes, edges);
+  const inDegree = new Map<string, number>();
+  for (const id of ids) {
+    inDegree.set(id, incoming.get(id)!.length);
+  }
+
+  function sortReady(ready: string[]) {
+    ready.sort((a, b) => {
+      const na = byId.get(a)!;
+      const nb = byId.get(b)!;
+      if (na.position.x !== nb.position.x) return na.position.x - nb.position.x;
+      if (na.position.y !== nb.position.y) return na.position.y - nb.position.y;
+      return a.localeCompare(b);
+    });
+  }
+
+  const ready: string[] = [];
+  for (const [id, deg] of inDegree) {
+    if (deg === 0) ready.push(id);
+  }
+  sortReady(ready);
+
+  const ordered: string[] = [];
+  while (ready.length) {
+    const id = ready.shift()!;
+    ordered.push(id);
+    for (const next of outgoing.get(id) ?? []) {
+      const nextDeg = inDegree.get(next)! - 1;
+      inDegree.set(next, nextDeg);
+      if (nextDeg === 0) {
+        ready.push(next);
+        sortReady(ready);
+      }
+    }
+  }
+
+  if (ordered.length !== ids.size) {
+    throw new GraphError("Unable to order workflow (unexpected cycle or mismatch)");
+  }
+
+  return ordered;
+}
+
 export function assertConnectedDAG(nodes: WorkflowNode[], edges: WorkflowEdge[]) {
   if (nodes.length === 0) return;
   if (edges.length === 0 && nodes.length > 1) {

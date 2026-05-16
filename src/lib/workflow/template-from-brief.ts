@@ -38,6 +38,7 @@ export function buildTemplateWorkflowDocument(brief: string): WorkflowDocument {
       id: `e-${textId}-${fluxId}`,
       source: textId,
       target: fluxId,
+      sourceHandle: "text",
       targetHandle: "text",
     },
   ];
@@ -62,12 +63,14 @@ export function buildTemplateWorkflowDocument(brief: string): WorkflowDocument {
       id: `e-${textId}-${exportId}`,
       source: textId,
       target: exportId,
+      sourceHandle: "text",
       targetHandle: "text",
     });
     edges.push({
       id: `e-${fluxId}-${exportId}`,
       source: fluxId,
       target: exportId,
+      sourceHandle: "image",
       targetHandle: "image",
     });
   }

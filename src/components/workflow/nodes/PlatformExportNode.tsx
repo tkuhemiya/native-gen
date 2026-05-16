@@ -2,8 +2,12 @@
 
 import { Handle, Position, useReactFlow, type NodeProps } from "@xyflow/react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
+import {
+  useNodeRunOutput,
+  useWorkflowRunContext,
+} from "@/components/workflow/WorkflowRunContext";
 import type { AppNode } from "@/lib/workflow/app-node";
 import type { PublicAccountsStatus } from "@/lib/oauth/public-status";
 
@@ -24,6 +28,45 @@ export function PlatformExportNode(props: NodeProps<AppNode>) {
   const { data, id } = props;
   const { updateNodeData } = useReactFlow();
   const [accounts, setAccounts] = useState<PublicAccountsStatus | null>(null);
+
+  const runOut = useNodeRunOutput(id);
+  const { activeNodeId, phase } = useWorkflowRunContext();
+  const runningHere = phase === "running" && activeNodeId === id;
+
+  const bundlePreview = useMemo(() => {
+    if (runOut?.type !== "bundle") return null;
+    const img = runOut.files.find(
+      (f) =>
+        f.blob.type.startsWith("image/") ||
+        /\.(png|jpe?g|webp)$/i.test(f.path),
+    );
+    const vid = runOut.files.find(
+      (f) => f.blob.type.startsWith("video/") || /\.mp4$/i.test(f.path),
+    );
+    return { img, vid };
+  }, [runOut]);
+
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!bundlePreview?.img) {
+      setObjectUrl(null);
+      return;
+    }
+    const u = URL.createObjectURL(bundlePreview.img.blob);
+    setObjectUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [bundlePreview?.img]);
+
+  const [videoObjectUrl, setVideoObjectUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!bundlePreview?.vid) {
+      setVideoObjectUrl(null);
+      return;
+    }
+    const u = URL.createObjectURL(bundlePreview.vid.blob);
+    setVideoObjectUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [bundlePreview?.vid]);
 
   useEffect(() => {
     let cancelled = false;
@@ -50,7 +93,11 @@ export function PlatformExportNode(props: NodeProps<AppNode>) {
       : metaPages;
 
   return (
-    <div className="relative min-w-[260px] rounded-lg border border-border bg-card px-3 py-2 text-card-foreground shadow-sm">
+    <div
+      className={`relative min-w-[260px] rounded-lg border border-border bg-card px-3 py-2 text-card-foreground shadow-sm${
+        runningHere ? " ring-2 ring-primary ring-offset-2 ring-offset-background" : ""
+      }`}
+    >
       <div className="relative mb-2 h-[52px] w-full">
         <Handle
           type="target"
@@ -80,6 +127,39 @@ export function PlatformExportNode(props: NodeProps<AppNode>) {
       <p className="mb-1 text-[10px] leading-snug text-muted-foreground">
         Top: copy · Middle: image(s) · Bottom: video (YouTube https)
       </p>
+      {runOut?.type === "bundle" ? (
+        <div className="mb-2 rounded-md border border-border bg-muted/40 p-2">
+          <p className="mb-1 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Final export
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {objectUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={objectUrl}
+                alt=""
+                className="h-24 max-w-[120px] rounded border border-border object-cover"
+              />
+            ) : null}
+            {videoObjectUrl ? (
+              <video
+                src={videoObjectUrl}
+                className="h-24 max-w-[160px] rounded border border-border object-cover"
+                muted
+                playsInline
+                controls
+              />
+            ) : null}
+          </div>
+          {runOut.publish?.caption ? (
+            <p className="mt-1 line-clamp-4 text-[9px] text-muted-foreground">
+              {runOut.publish.caption}
+            </p>
+          ) : runOut.publishYoutube ? (
+            <p className="mt-1 text-[9px] text-muted-foreground">{runOut.publishYoutube.title}</p>
+          ) : null}
+        </div>
+      ) : null}
       <ol className="mb-2 list-decimal space-y-0.5 pl-4 text-[9px] leading-relaxed text-muted-foreground">
         <li>Connect accounts in Social accounts (reconnect Meta after scope updates).</li>
         <li>Pick platform + Page (Meta). Use Flux so images are https (IG: 2+ images → carousel).</li>

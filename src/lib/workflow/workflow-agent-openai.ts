@@ -42,10 +42,11 @@ platformExport node:
 Edges (each needs unique string id):
   { "id": string, "source": nodeId, "target": nodeId, "sourceHandle": null|string, "targetHandle": null|"text"|"image"|"video" }
 
-Handle wiring:
-- Into falFluxSchnell: use targetHandle "text". Source is usually mediaInput (sourceHandle null).
-- Into platformExport: wire mediaInput copy with targetHandle "text"; wire falFluxSchnell image with sourceHandle "image" and targetHandle "image".
-- For YouTube video uploads later: optionally wire mediaInput early if user supplied remote video URL in value — normally skip video handle unless the brief explicitly mentions an https video asset.
+Handle wiring (pin colors: text=green, image=blue, video=amber):
+- mediaInput has three SOURCE handles: "text" (brief/copy), "image" (uploaded images), "video" (uploaded videos). Use the matching handle for each wire (do not use null on new graphs).
+- Into falFluxSchnell: targetHandle "text". Source should be mediaInput with sourceHandle "text" (prompt + suffix).
+- Into platformExport: mediaInput copy: targetHandle "text" and sourceHandle "text"; Flux output: sourceHandle "image" and targetHandle "image".
+- YouTube video: wire a remote https MP4 via platformExport targetHandle "video" from mediaInput sourceHandle "video" or from an upstream node that outputs video; data URLs from uploads work for bundle/download, not for the optional YouTube API upload path which expects https.
 
 Typical 3-node pipeline x positions ~0, 320, 640. Use varied y only if multiple branches.
 

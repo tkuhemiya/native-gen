@@ -20,11 +20,15 @@ import { saveAs } from "file-saver";
 import JSZip from "jszip";
 import { useTheme } from "next-themes";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 
 import { ThemeToggle } from "@/components/theme-toggle";
 import { FlowContextMenuPortal } from "@/components/workflow/FlowContextMenu";
 import { WorkflowAgentPanel } from "@/components/workflow/WorkflowAgentPanel";
+import {
+  WorkflowRunProvider,
+  type WorkflowRunPhase,
+} from "@/components/workflow/WorkflowRunContext";
 import { FalFluxSchnellNode } from "@/components/workflow/nodes/FalFluxSchnellNode";
 import { MediaInputNode } from "@/components/workflow/nodes/MediaInputNode";
 import { PlatformExportNode } from "@/components/workflow/nodes/PlatformExportNode";
@@ -40,15 +44,19 @@ import {
   type WorkflowNode,
 } from "@/lib/workflow/schema";
 import { runWorkflowDAG, wrapError, type RuntimeOutputs } from "@/lib/workflow/runner";
+import { areWorkflowHandlesCompatible } from "@/lib/workflow/workflow-connection";
 import {
   clearLastLoadedWorkflowId,
   deleteWorkflowDoc,
   getLastLoadedWorkflowId,
+  getLastRunSummaryJson,
   listWorkflowDocs,
   loadWorkflowDoc,
+  persistWorkflowRunArtifacts,
   saveWorkflowDoc,
   setLastLoadedWorkflowId,
 } from "@/lib/workflow/storage";
+import { zipRuntimeOutputs } from "@/lib/workflow/zip-outputs";
 import { normalizeWorkflowDocument } from "@/lib/workflow/migrate";
 
 const nodeTypes = {
@@ -85,6 +93,105 @@ type FlowContextMenuState =
     }
   | { kind: "node"; clientX: number; clientY: number; nodeId: string };
 
+function BlobThumb({ blob, title }: { blob: Blob; title: string }) {
+  const url = useMemo(() => URL.createObjectURL(blob), [blob]);
+  useEffect(() => {
+    return () => URL.revokeObjectURL(url);
+  }, [url]);
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={url}
+      alt=""
+      title={title}
+      className="h-11 w-11 shrink-0 rounded border border-border object-cover"
+    />
+  );
+}
+
+/** Strips / footer: quick glance at image/video outputs from the latest run or in-progress live outputs. */
+function GeneratedPreviewStrip({
+  outputs,
+}: {
+  outputs: RuntimeOutputs | null;
+}) {
+  const entries = useMemo(() => {
+    if (!outputs) return [] as { key: string; el: ReactNode }[];
+    const out: { key: string; el: ReactNode }[] = [];
+    for (const [nodeId, o] of Object.entries(outputs)) {
+      if (o.type === "image") {
+        out.push({
+          key: `${nodeId}-img`,
+          el: (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={o.url}
+              alt=""
+              title="Generated image"
+              className="h-11 w-11 shrink-0 rounded border border-border object-cover"
+            />
+          ),
+        });
+      } else if (o.type === "video") {
+        out.push({
+          key: `${nodeId}-vid`,
+          el: (
+            <video
+              src={o.url}
+              muted
+              playsInline
+              className="h-11 w-20 shrink-0 rounded border border-border object-cover"
+              title="Video"
+            />
+          ),
+        });
+      } else if (o.type === "mediaInput") {
+        o.imageUrls.slice(0, 3).forEach((u, i) => {
+          out.push({
+            key: `${nodeId}-in-${i}`,
+            el: (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={u}
+                alt=""
+                title="Input image"
+                className="h-11 w-11 shrink-0 rounded border border-border object-cover"
+              />
+            ),
+          });
+        });
+      } else if (o.type === "bundle") {
+        const firstImg = o.files.find(
+          (f) =>
+            f.blob.type.startsWith("image/") ||
+            /\.(png|jpe?g|webp)$/i.test(f.path),
+        );
+        if (firstImg) {
+          out.push({
+            key: `${nodeId}-bundle`,
+            el: (
+              <BlobThumb blob={firstImg.blob} title="Export bundle preview" />
+            ),
+          });
+        }
+      }
+    }
+    return out;
+  }, [outputs]);
+
+  if (entries.length === 0) return null;
+
+  return (
+    <div className="flex max-w-full items-center gap-1.5 overflow-x-auto py-0.5">
+      {entries.map(({ key, el }) => (
+        <div key={key} className="shrink-0">
+          {el}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function WorkflowEditor() {
   const [workflowName, setWorkflowName] = useState("Untitled campaign");
   const [workflowId, setWorkflowId] = useState(() => crypto.randomUUID());
@@ -95,6 +202,10 @@ export function WorkflowEditor() {
   const [storageHydrated, setStorageHydrated] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [lastOutputs, setLastOutputs] = useState<RuntimeOutputs | null>(null);
+  const [liveOutputs, setLiveOutputs] = useState<RuntimeOutputs | null>(null);
+  const [runPhase, setRunPhase] = useState<WorkflowRunPhase>("idle");
+  const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
+  const [storageSavedHint, setStorageSavedHint] = useState<string | null>(null);
 
   const metaPublishCandidates = useMemo(() => {
     if (!lastOutputs) return [] as AppNode[];
@@ -163,10 +274,49 @@ export function WorkflowEditor() {
   const flowColorMode =
     themeMounted && resolvedTheme === "dark" ? "dark" : "light";
 
-  const { screenToFlowPosition, viewportInitialized } = useReactFlow<
+  const { screenToFlowPosition, viewportInitialized, getNode } = useReactFlow<
     AppNode,
     Edge
   >();
+
+  const runContextValue = useMemo(
+    () => ({
+      outputs: lastOutputs,
+      liveOutputs,
+      activeNodeId,
+      phase: runPhase,
+    }),
+    [lastOutputs, liveOutputs, activeNodeId, runPhase],
+  );
+
+  const previewOutputs = useMemo(() => {
+    if (runPhase === "running" && liveOutputs) return liveOutputs;
+    return lastOutputs;
+  }, [runPhase, liveOutputs, lastOutputs]);
+
+  const refreshStorageHint = useCallback(() => {
+    try {
+      const raw = getLastRunSummaryJson();
+      if (!raw) {
+        setStorageSavedHint(null);
+        return;
+      }
+      const j = JSON.parse(raw) as { artifactCount?: number };
+      if (typeof j.artifactCount === "number") {
+        setStorageSavedHint(
+          j.artifactCount > 0
+            ? `${j.artifactCount} file(s) from the latest run are stored in IndexedDB on this device.`
+            : "Latest run had nothing new to store locally.",
+        );
+      }
+    } catch {
+      setStorageSavedHint(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshStorageHint();
+  }, [refreshStorageHint]);
 
   const closeContextMenu = useCallback(() => {
     setContextMenu({ kind: "closed" });
@@ -200,6 +350,9 @@ export function WorkflowEditor() {
         })),
       );
       setLastOutputs(null);
+      setLiveOutputs(null);
+      setRunPhase("idle");
+      setActiveNodeId(null);
       await saveWorkflowDoc(doc);
       await refreshLibrary();
     },
@@ -249,6 +402,9 @@ export function WorkflowEditor() {
           })),
         );
         setLastOutputs(null);
+        setLiveOutputs(null);
+        setRunPhase("idle");
+        setActiveNodeId(null);
       }
       setStorageHydrated(true);
     })();
@@ -400,6 +556,22 @@ export function WorkflowEditor() {
     [setEdges],
   );
 
+  const isValidConnection = useCallback(
+    (c: Connection | Edge) => {
+      const source = getNode(c.source);
+      const target = getNode(c.target);
+      if (!source || !target) return false;
+      if (c.source === c.target) return false;
+      return areWorkflowHandlesCompatible(
+        String(source.type),
+        c.sourceHandle ?? null,
+        String(target.type),
+        c.targetHandle ?? null,
+      );
+    },
+    [getNode],
+  );
+
   const starterWorkflow = () => {
     const textId = crypto.randomUUID();
     const fluxId = crypto.randomUUID();
@@ -433,10 +605,15 @@ export function WorkflowEditor() {
         id: `e-${textId}-${fluxId}`,
         source: textId,
         target: fluxId,
+        sourceHandle: "text",
         targetHandle: "text",
         animated: true,
       },
     ]);
+    setLastOutputs(null);
+    setLiveOutputs(null);
+    setRunPhase("idle");
+    setActiveNodeId(null);
     setStatus("Inserted starter nodes");
   };
 
@@ -448,6 +625,9 @@ export function WorkflowEditor() {
     setNodes([]);
     setEdges([]);
     setLastOutputs(null);
+    setLiveOutputs(null);
+    setRunPhase("idle");
+    setActiveNodeId(null);
     setStatus("New workflow");
   };
 
@@ -509,20 +689,69 @@ export function WorkflowEditor() {
   const runGraph = async () => {
     setStatus("Running…");
     setLastOutputs(null);
+    setLiveOutputs({});
+    setRunPhase("running");
+    setActiveNodeId(null);
     try {
+      const workflowNodes = rfNodesToWorkflow(nodes);
       const outputs = await runWorkflowDAG(
-        rfNodesToWorkflow(nodes),
+        workflowNodes,
         rfEdgesToWorkflow(edges),
         {
           onProgress: (p) => setStatus(p.message ?? p.phase),
+          onNodeComplete: (e) => {
+            setLiveOutputs((prev) => ({
+              ...(prev ?? {}),
+              [e.nodeId]: e.output,
+            }));
+            setActiveNodeId(e.nodeId);
+          },
         },
       );
       setLastOutputs(outputs);
+      setLiveOutputs(outputs);
+      setActiveNodeId(null);
+      setRunPhase("done");
       setStatus("Run finished");
+      void persistWorkflowRunArtifacts(
+        workflowId,
+        workflowName,
+        workflowNodes,
+        outputs,
+      ).then(({ count }) => {
+        refreshStorageHint();
+        if (count > 0) {
+          setStatus(
+            `Run finished — saved ${count} file(s) to this browser (IndexedDB)`,
+          );
+        }
+      });
     } catch (error) {
+      setRunPhase("error");
+      setLiveOutputs(null);
+      setLastOutputs(null);
       setStatus(wrapError(error).message);
     }
   };
+
+  const downloadAllGenerated = useCallback(async () => {
+    if (!lastOutputs) {
+      setStatus("Run the workflow first.");
+      return;
+    }
+    setStatus("Building ZIP of all media…");
+    try {
+      const blob = await zipRuntimeOutputs(
+        lastOutputs,
+        workflowName.replace(/\s+/g, "-").toLowerCase() || "workflow",
+      );
+      const slug = workflowName.replace(/\s+/g, "-").toLowerCase();
+      saveAs(blob, `${slug}-all-media.zip`);
+      setStatus("Downloaded all media");
+    } catch {
+      setStatus("Could not build media ZIP.");
+    }
+  }, [lastOutputs, workflowName]);
 
   const downloadZip = async () => {
     if (!lastOutputs) {
@@ -672,6 +901,7 @@ export function WorkflowEditor() {
 
   return (
     <>
+    <WorkflowRunProvider value={runContextValue}>
     <div className="flex h-[100dvh] flex-col bg-background text-foreground">
       <header className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3 text-sm">
         <div className="mr-auto flex min-w-[200px] flex-1 flex-col gap-1">
@@ -731,6 +961,15 @@ export function WorkflowEditor() {
             onClick={() => void runGraph()}
           >
             Run workflow
+          </button>
+          <button
+            type="button"
+            className="rounded-md border border-border bg-card px-3 py-1 text-xs font-medium text-card-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={!lastOutputs}
+            title="Zip all generated images, videos, inputs, and export files from the last run"
+            onClick={() => void downloadAllGenerated()}
+          >
+            Download all media
           </button>
           <button
             type="button"
@@ -800,8 +1039,52 @@ export function WorkflowEditor() {
             Social accounts
           </Link>
           <ThemeToggle />
+          <div
+            className="hidden max-w-[220px] flex-col gap-0.5 text-[9px] leading-tight text-muted-foreground lg:flex"
+            title="Wires must match pin types (text / image / video)"
+          >
+            <span className="font-semibold uppercase tracking-wide text-muted-foreground/90">
+              Pins
+            </span>
+            <span>
+              <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 align-middle" />{" "}
+              Text ·{" "}
+              <span className="inline-block h-2 w-2 rounded-full bg-sky-500 align-middle" />{" "}
+              Image ·{" "}
+              <span className="inline-block h-2 w-2 rounded-full bg-amber-500 align-middle" />{" "}
+              Video
+            </span>
+          </div>
         </div>
       </header>
+
+      {runPhase === "running" ||
+      (previewOutputs && Object.keys(previewOutputs).length > 0) ? (
+        <div className="flex flex-wrap items-stretch gap-3 border-b border-border bg-muted/20 px-4 py-2">
+          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+            <div className="flex flex-wrap items-center gap-2 text-[10px]">
+              <span className="font-semibold uppercase tracking-wide text-muted-foreground">
+                Generated media
+              </span>
+              {runPhase === "running" ? (
+                <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[9px] font-medium text-primary">
+                  In progress…
+                </span>
+              ) : null}
+            </div>
+            <p className="text-[9px] leading-snug text-muted-foreground">
+              Execution follows the graph: upstream nodes before downstream. When several nodes are
+              ready at once, the one furthest <strong className="font-medium text-foreground">left</strong> on the canvas runs first. Thumbnails fill in as each block finishes.
+            </p>
+            <GeneratedPreviewStrip outputs={previewOutputs} />
+          </div>
+          {storageSavedHint ? (
+            <p className="max-w-[220px] self-center text-[9px] leading-snug text-muted-foreground">
+              {storageSavedHint}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="flex flex-1 overflow-hidden">
         <WorkflowAgentPanel
@@ -816,6 +1099,7 @@ export function WorkflowEditor() {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
+            isValidConnection={isValidConnection}
             onPaneClick={onPaneClick}
             onPaneContextMenu={onPaneContextMenu}
             onNodeContextMenu={onNodeContextMenu}
@@ -851,8 +1135,12 @@ export function WorkflowEditor() {
             Last run: {Object.keys(lastOutputs).length} node outputs
           </span>
         ) : null}
+        <span className="text-[10px] text-muted-foreground/90">
+          Execution order is topological (dependencies first); among ready nodes, the left-most runs first.
+        </span>
       </footer>
     </div>
+    </WorkflowRunProvider>
     <FlowContextMenuPortal
       menu={
         contextMenu.kind === "closed"

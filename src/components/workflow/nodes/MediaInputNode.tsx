@@ -2,6 +2,7 @@
 
 import { Handle, Position, useReactFlow, type NodeProps } from "@xyflow/react";
 import { useCallback, useRef, useState } from "react";
+import { useWorkflowRunContext } from "@/components/workflow/WorkflowRunContext";
 import type { AppNode } from "@/lib/workflow/app-node";
 import type { MediaInputAsset } from "@/lib/workflow/schema";
 
@@ -19,6 +20,8 @@ export function MediaInputNode(props: NodeProps<AppNode>) {
   const { updateNodeData, getNode } = useReactFlow();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
+  const { activeNodeId, phase } = useWorkflowRunContext();
+  const runningHere = phase === "running" && activeNodeId === id;
 
   const appendImageFile = useCallback(
     async (file: File) => {
@@ -122,19 +125,45 @@ export function MediaInputNode(props: NodeProps<AppNode>) {
 
   return (
     <div
-      className="relative w-[272px] rounded-lg border border-border bg-card text-card-foreground shadow-sm"
+      className={`relative w-[272px] rounded-lg border border-border bg-card text-card-foreground shadow-sm${
+        runningHere ? " ring-2 ring-primary ring-offset-2 ring-offset-background" : ""
+      }`}
       onPasteCapture={onPasteCapture}
     >
       <Handle
         type="source"
         position={Position.Right}
-        className="z-10 !top-1/2 !h-3 !w-3 !-translate-y-1/2 !border-2 !border-card !bg-sky-500"
+        id="text"
+        style={{ top: 24 }}
+        className="nodrag nopan z-10 !h-3 !w-3 !-translate-y-1/2 !border-2 !border-card !bg-emerald-500"
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        id="image"
+        style={{ top: "50%" }}
+        className="nodrag nopan z-10 !h-3 !w-3 !-translate-y-1/2 !border-2 !border-card !bg-sky-500"
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        id="video"
+        style={{ top: "calc(100% - 20px)" }}
+        className="nodrag nopan z-10 !h-3 !w-3 !-translate-y-1/2 !border-2 !border-card !bg-amber-500"
       />
       <div className="flex cursor-grab select-none items-center justify-center rounded-t-lg border-b border-border px-2 py-1.5 active:cursor-grabbing">
         <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
           Media in
         </span>
       </div>
+      <p className="border-b border-border px-3 py-1 text-[9px] leading-tight text-muted-foreground">
+        <span className="font-medium text-emerald-600 dark:text-emerald-400">Text</span>
+        {" · "}
+        <span className="font-medium text-sky-600 dark:text-sky-400">Image</span>
+        {" · "}
+        <span className="font-medium text-amber-600 dark:text-amber-400">Video</span>
+        {" — right pins"}
+      </p>
       <div className="px-3 pt-2">
         <textarea
           className="nodrag nopan nowheel h-14 w-full resize-none rounded-md border border-border bg-muted px-2 py-1 text-xs leading-snug text-foreground placeholder:text-muted-foreground outline-none focus:ring-0"

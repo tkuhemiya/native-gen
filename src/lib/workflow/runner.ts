@@ -1,7 +1,7 @@
 import {
   assertConnectedDAG,
   GraphError,
-  topologicalOrder,
+  topologicalOrderPreferLeft,
 } from "./graph";
 import type { WorkflowEdge, WorkflowNode } from "./schema";
 
@@ -35,7 +35,20 @@ export type RuntimeOutputs = Record<
 export type RunProgress = {
   phase: "idle" | "running" | "done" | "error";
   message?: string;
+  step?: { index: number; total: number; nodeId: string };
 };
+
+export type NodeRunComplete = {
+  nodeId: string;
+  index: number;
+  total: number;
+  label: string;
+  output: RuntimeOutputs[string];
+};
+
+function runLabel(node: WorkflowNode): string {
+  return node.data.label.trim() || node.data.kind;
+}
 
 type FalTextToImageResponse = {
   image?: { url: string };
@@ -50,6 +63,21 @@ function isImageTargetEdge(edge: WorkflowEdge, nodeId: string) {
   return edge.target === nodeId && (edge.targetHandle == null || edge.targetHandle === "image");
 }
 
+function mediaInputTextFromEdge(edge: WorkflowEdge): boolean {
+  const sh = edge.sourceHandle;
+  return sh == null || sh === "text";
+}
+
+function mediaInputImagesFromEdge(edge: WorkflowEdge): boolean {
+  const sh = edge.sourceHandle;
+  return sh == null || sh === "image";
+}
+
+function mediaInputVideoFromEdge(edge: WorkflowEdge): boolean {
+  const sh = edge.sourceHandle;
+  return sh == null || sh === "video";
+}
+
 function collectUpstreamText(
   nodeId: string,
   incomingByTarget: Map<string, WorkflowEdge[]>,
@@ -61,8 +89,15 @@ function collectUpstreamText(
     if (!isTextTargetEdge(edge, nodeId)) continue;
     const upstream = outputs[edge.source];
     if (!upstream) continue;
-    if (upstream.type === "text") parts.push(upstream.value);
-    if (upstream.type === "mediaInput" && upstream.text.trim()) {
+    if (upstream.type === "text") {
+      if (edge.sourceHandle === "image" || edge.sourceHandle === "video") continue;
+      parts.push(upstream.value);
+    }
+    if (
+      upstream.type === "mediaInput" &&
+      upstream.text.trim() &&
+      mediaInputTextFromEdge(edge)
+    ) {
       parts.push(upstream.text);
     }
   }
@@ -86,12 +121,13 @@ function collectUpstreamImageUrls(
     const upstream = outputs[edge.source];
     if (!upstream) continue;
     if (upstream.type === "image" && upstream.url) {
+      if (edge.sourceHandle === "text" || edge.sourceHandle === "video") continue;
       if (!seen.has(upstream.url)) {
         urls.push(upstream.url);
         seen.add(upstream.url);
       }
     }
-    if (upstream.type === "mediaInput") {
+    if (upstream.type === "mediaInput" && mediaInputImagesFromEdge(edge)) {
       for (const u of upstream.imageUrls) {
         if (u && !seen.has(u)) {
           urls.push(u);
@@ -113,8 +149,15 @@ function collectUpstreamVideoUrl(
     if (!isVideoTargetEdge(edge, nodeId)) continue;
     const upstream = outputs[edge.source];
     if (!upstream) continue;
-    if (upstream.type === "video") return upstream.url;
-    if (upstream.type === "mediaInput" && upstream.videoUrls[0]) {
+    if (upstream.type === "video") {
+      if (edge.sourceHandle === "text" || edge.sourceHandle === "image") continue;
+      return upstream.url;
+    }
+    if (
+      upstream.type === "mediaInput" &&
+      upstream.videoUrls[0] &&
+      mediaInputVideoFromEdge(edge)
+    ) {
       return upstream.videoUrls[0];
     }
   }
@@ -126,15 +169,18 @@ export async function runWorkflowDAG(
   edges: WorkflowEdge[],
   options: {
     onProgress?: (p: RunProgress) => void;
+    /** Fires after each node’s output is ready (same order as execution). */
+    onNodeComplete?: (e: NodeRunComplete) => void;
   } = {},
 ): Promise<RuntimeOutputs> {
   if (nodes.length === 0) {
     throw new GraphError("Add at least one node before running");
   }
 
-  const { onProgress } = options;
+  const { onProgress, onNodeComplete } = options;
   assertConnectedDAG(nodes, edges);
-  const order = topologicalOrder(nodes, edges);
+  const order = topologicalOrderPreferLeft(nodes, edges);
+  const totalSteps = order.length;
   const nodesById = new Map(nodes.map((n) => [n.id, n]));
   const incomingByTarget = new Map<string, WorkflowEdge[]>();
   for (const e of edges) {
@@ -147,9 +193,16 @@ export async function runWorkflowDAG(
 
   onProgress?.({ phase: "running", message: "Executing workflow…" });
 
-  for (const id of order) {
+  for (let step = 0; step < order.length; step++) {
+    const id = order[step]!;
     const node = nodesById.get(id)!;
     const data = node.data;
+    const label = runLabel(node);
+    onProgress?.({
+      phase: "running",
+      message: `${step + 1}/${totalSteps} · ${label}`,
+      step: { index: step + 1, total: totalSteps, nodeId: id },
+    });
 
     switch (data.kind) {
       case "mediaInput":
@@ -159,6 +212,13 @@ export async function runWorkflowDAG(
           imageUrls: data.images.map((a) => a.dataUrl),
           videoUrls: data.videos.map((a) => a.dataUrl),
         };
+        onNodeComplete?.({
+          nodeId: id,
+          index: step + 1,
+          total: totalSteps,
+          label,
+          output: outputs[id],
+        });
         break;
       case "falFluxSchnell": {
         const prompt =
@@ -187,6 +247,13 @@ export async function runWorkflowDAG(
         const url = body.image?.url ?? body.images?.[0]?.url;
         if (!url) throw new GraphError("Fal response missing image URL");
         outputs[id] = { type: "image", url };
+        onNodeComplete?.({
+          nodeId: id,
+          index: step + 1,
+          total: totalSteps,
+          label,
+          output: outputs[id],
+        });
         break;
       }
       case "platformExport": {
@@ -246,6 +313,13 @@ export async function runWorkflowDAG(
                 }
               : undefined,
           };
+          onNodeComplete?.({
+            nodeId: id,
+            index: step + 1,
+            total: totalSteps,
+            label,
+            output: outputs[id],
+          });
           break;
         }
 
@@ -292,6 +366,13 @@ export async function runWorkflowDAG(
                 }
               : undefined,
         };
+        onNodeComplete?.({
+          nodeId: id,
+          index: step + 1,
+          total: totalSteps,
+          label,
+          output: outputs[id],
+        });
         break;
       }
       default: {
