@@ -6,6 +6,7 @@ import {
 } from "./generation-plan";
 import { layoutWorkflowNodesCompactDAG } from "./node-layout";
 import { normalizeWorkflowDocument } from "./migrate";
+import { reconcileGenerationImageSizes } from "./platform-aspect-presets";
 import {
   WORKFLOW_DOCUMENT_VERSION,
   workflowDocumentSchema,
@@ -179,6 +180,11 @@ export function validateAndFinalizeWorkflowWrite(
       issues: lines.length ? lines : [message],
     };
   }
+
+  doc = {
+    ...doc,
+    nodes: reconcileGenerationImageSizes(doc.nodes, doc.edges),
+  };
 
   let out = doc;
 

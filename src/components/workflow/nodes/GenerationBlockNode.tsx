@@ -164,7 +164,7 @@ export function GenerationBlockNode(props: NodeProps<AppNode>) {
                   Aspect ratio
                   <select
                     className="min-w-0 max-w-full rounded-md border border-border bg-card px-1 py-1 text-xs text-card-foreground"
-                    title={FAL_FLUX_IMAGE_SIZE_DIMENSIONS[data.imageSize]}
+                    title={`${FAL_FLUX_IMAGE_SIZE_DIMENSIONS[data.imageSize]} — Stories/Reels/TikTok: 9:16 portrait; IG/FB feed squares: 1:1 HD; YouTube: 16:9 landscape; FB horizontal feed: 4:3. Saving from the agent reconciles this from wired exports when labels mention Stories vs Feed.`}
                     value={data.imageSize}
                     onChange={(e) => {
                       const v = e.target.value;

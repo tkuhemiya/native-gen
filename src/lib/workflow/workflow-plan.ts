@@ -4,6 +4,7 @@ import { z } from "zod";
 import { assertConnectedDAG, GraphError } from "./graph";
 import { incomingMediaLanes, outgoingMediaLanes, planGeneration } from "./generation-plan";
 import { layoutWorkflowNodesCompactDAG } from "./node-layout";
+import { reconcileGenerationImageSizes } from "./platform-aspect-presets";
 import {
   WORKFLOW_DOCUMENT_VERSION,
   defaultNodeData,
@@ -445,6 +446,17 @@ export function compileWorkflowPlanToDocument(
     }));
 
     assertConnectedDAG(nodes, edges);
+
+    const skipImageInference = new Set<string>();
+    for (const st of plan.stages) {
+      if (st.kind !== "generation") continue;
+      if (st.settings?.imageSize !== undefined) {
+        skipImageInference.add(stageIdToNodeId.get(st.id)!);
+      }
+    }
+    nodes = reconcileGenerationImageSizes(nodes, edges, {
+      skipNodeIds: skipImageInference,
+    });
 
     nodes = layoutWorkflowNodesCompactDAG(nodes, edges);
 
