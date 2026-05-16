@@ -11,6 +11,7 @@ import {
 } from "@/components/workflow/WorkflowRunContext";
 import type { AppNode } from "@/lib/workflow/app-node";
 import type { PublicAccountsStatus } from "@/lib/oauth/public-status";
+import { socialAccountsFetchHeaders } from "@/lib/oauth/social-fetch-headers";
 
 const PLATFORMS = [
   { id: "youtube", label: "YouTube" },
@@ -20,7 +21,10 @@ const PLATFORMS = [
 ] as const;
 
 async function fetchAccounts(): Promise<PublicAccountsStatus> {
-  const res = await fetch("/api/oauth/accounts", { cache: "no-store" });
+  const res = await fetch("/api/oauth/accounts", {
+    cache: "no-store",
+    headers: socialAccountsFetchHeaders(),
+  });
   if (!res.ok) throw new Error("Failed to load connections");
   return res.json();
 }
@@ -29,21 +33,13 @@ function isBundleMediaFile(f: { path: string; blob: Blob }): boolean {
   if (f.blob.type === "application/json" || /\.json$/i.test(f.path)) {
     return false;
   }
-  return (
-    f.blob.type.startsWith("image/") ||
-    f.blob.type.startsWith("video/") ||
-    /\.(png|jpe?g|webp|gif|mp4|webm|mov)$/i.test(f.path)
-  );
+  return f.blob.type.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(f.path);
 }
 
 function downloadName(path: string, index: number, blob: Blob): string {
   const base = path.split("/").pop()?.trim() || "";
   if (base) return base;
-  const ext = blob.type.startsWith("video/")
-    ? "mp4"
-    : blob.type.startsWith("image/")
-      ? "png"
-      : "bin";
+  const ext = blob.type.startsWith("image/") ? "png" : "bin";
   return `output-${index + 1}.${ext}`;
 }
 
@@ -124,27 +120,20 @@ export function PlatformExportNode(props: NodeProps<AppNode>) {
         runningHere ? " ring-2 ring-primary ring-offset-2 ring-offset-background" : ""
       }`}
     >
-      <div className="relative mb-2 h-[52px] w-full">
+      <div className="relative mb-2 h-[40px] w-full">
         <Handle
           type="target"
           position={Position.Left}
           id="text"
-          style={{ top: 8 }}
+          style={{ top: 10 }}
           className="z-10 !h-3 !w-3 !-translate-y-1/2 !border-2 !border-card !bg-emerald-500"
         />
         <Handle
           type="target"
           position={Position.Left}
           id="image"
-          style={{ top: 26 }}
+          style={{ top: 30 }}
           className="z-10 !h-3 !w-3 !-translate-y-1/2 !border-2 !border-card !bg-sky-500"
-        />
-        <Handle
-          type="target"
-          position={Position.Left}
-          id="video"
-          style={{ top: 44 }}
-          className="z-10 !h-3 !w-3 !-translate-y-1/2 !border-2 !border-card !bg-amber-500"
         />
         <span className="pointer-events-none absolute inset-0 flex items-center justify-center text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
           Output
@@ -154,15 +143,13 @@ export function PlatformExportNode(props: NodeProps<AppNode>) {
       <div className="mb-2 max-h-[260px] overflow-y-auto pr-0.5">
         {mediaFiles.length === 0 ? (
           <p className="py-6 text-center text-[10px] leading-relaxed text-muted-foreground">
-            Run the workflow to show images and video from wired inputs here.
+            Run the workflow to show exported stills from wired inputs here.
           </p>
         ) : (
           <div className="columns-2 gap-2 [column-fill:_balance]">
             {mediaFiles.map((file, i) => {
               const src = mediaUrls[i];
               if (!src) return null;
-              const isVid =
-                file.blob.type.startsWith("video/") || /\.mp4|webm|mov$/i.test(file.path);
               const name = downloadName(file.path, i, file.blob);
               return (
                 <div
@@ -181,22 +168,12 @@ export function PlatformExportNode(props: NodeProps<AppNode>) {
                   >
                     <DownloadIcon className="h-3.5 w-3.5" />
                   </button>
-                  {isVid ? (
-                    <video
-                      src={src}
-                      className="max-h-40 w-full rounded-md object-cover"
-                      muted
-                      playsInline
-                      controls
-                    />
-                  ) : (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={src}
-                      alt=""
-                      className="max-h-48 w-full rounded-md object-cover"
-                    />
-                  )}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={src}
+                    alt=""
+                    className="max-h-48 w-full rounded-md object-cover"
+                  />
                 </div>
               );
             })}
@@ -207,10 +184,6 @@ export function PlatformExportNode(props: NodeProps<AppNode>) {
       {runOut?.type === "bundle" && runOut.publish?.caption ? (
         <p className="mb-2 line-clamp-3 text-[9px] text-muted-foreground">
           {runOut.publish.caption}
-        </p>
-      ) : runOut?.type === "bundle" && runOut.publishYoutube ? (
-        <p className="mb-2 line-clamp-2 text-[9px] text-muted-foreground">
-          {runOut.publishYoutube.title}
         </p>
       ) : null}
 
@@ -283,12 +256,7 @@ export function PlatformExportNode(props: NodeProps<AppNode>) {
       ) : null}
       {data.platform === "youtube" ? (
         <p className="mt-2 text-[9px] leading-relaxed text-muted-foreground">
-          Wire the <strong className="font-medium text-foreground">video</strong> handle to a public https MP4.
-          Connect Google under Social accounts. Demo uploads respect{" "}
-          <code className="rounded bg-muted px-0.5 text-[8px] text-foreground">
-            NATIVE_GEN_YOUTUBE_MAX_BYTES
-          </code>
-          .
+          Wire <strong className="font-medium text-foreground">image</strong> outputs into this node — runs bundle public https stills the same way as other platforms (no separate motion pipeline).
         </p>
       ) : null}
     </div>

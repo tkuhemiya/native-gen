@@ -1,7 +1,8 @@
+import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { loadSocialAccountsBlob } from "@/lib/oauth/server-store";
+import { loadSocialAccountsFromRequest } from "@/lib/oauth/request-social";
 import { publishLog, resolveRequestId } from "@/lib/publish/log";
 import { uploadYoutubeVideoFromUrl } from "@/lib/publish/youtube-upload";
 
@@ -17,7 +18,7 @@ const bodySchema = z.object({
   privacyStatus: z.enum(["private", "unlisted", "public"]).optional().default("unlisted"),
 });
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   const reqId = resolveRequestId(request);
   let json: unknown;
   try {
@@ -36,7 +37,7 @@ export async function POST(request: Request) {
 
   const { videoUrl, title, description, privacyStatus } = parsed.data;
 
-  const blob = await loadSocialAccountsBlob();
+  const blob = loadSocialAccountsFromRequest(request);
   if (!blob.google?.refreshToken) {
     publishLog("warn", reqId, "publish_youtube_not_connected");
     return NextResponse.json(

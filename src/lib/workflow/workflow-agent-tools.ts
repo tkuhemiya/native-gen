@@ -39,7 +39,7 @@ export function explainWorkflowPlan(plan: WorkflowPlan): { summary: string; stag
     } else {
       const imgs = [s.imageFromStageId, ...(s.moreImageFromStageIds ?? [])].filter(Boolean);
       lines.push(
-        `- **${s.id}** · platformExport · **${s.platform}** · copy: \`${s.copyFromStageId ?? "(default media)"}\` · images: \`${imgs.length ? imgs.join(", ") : "—"}\` · video: \`${s.videoFromStageId ?? "—"}\``,
+        `- **${s.id}** · platformExport · **${s.platform}** · copy: \`${s.copyFromStageId ?? "(default media)"}\` · images: \`${imgs.length ? imgs.join(", ") : "—"}\``,
       );
     }
   }
@@ -63,9 +63,6 @@ function generationPlanToIntents(plan: GenerationPlan): string[] {
   if (plan.needPassthroughText) intents.push("passthrough-text");
   if (plan.needCaption) intents.push("image-to-text");
   if (plan.needTextToImage) intents.push("text-to-image");
-  if (plan.needTextToVideo) intents.push("text-to-video");
-  if (plan.needImageToVideo) intents.push("image-to-video");
-  if (plan.needVideoToVideo) intents.push("video-to-video");
   return intents;
 }
 
@@ -122,9 +119,6 @@ function relativeUnitsForGeneration(plan: GenerationPlan): number {
   if (plan.needPassthroughText) u += 0;
   if (plan.needCaption) u += 2;
   if (plan.needTextToImage) u += 5;
-  if (plan.needTextToVideo) u += 16;
-  if (plan.needImageToVideo) u += 14;
-  if (plan.needVideoToVideo) u += 18;
   return u;
 }
 
@@ -160,7 +154,7 @@ export function estimatePlanCost(
     lineItems: rows,
     totalRelativeUnits,
     disclaimer:
-      "`relativeUnits` are rough comparables inside this app (not USD). Open each fal model page for live pricing; actual spend depends on resolution, duration, and retries.",
+      "`relativeUnits` are rough comparables inside this app (not USD). Open each fal model page for live pricing.",
   };
 }
 

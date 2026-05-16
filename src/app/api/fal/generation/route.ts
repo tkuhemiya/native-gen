@@ -2,11 +2,7 @@ import { ApiError, fal } from "@fal-ai/client";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import {
-  getFalImageCaptionEndpointId,
-  getFalImageToVideoEndpointId,
-  getFalTextToVideoEndpointId,
-} from "@/lib/fal/generation-models";
+import { getFalImageCaptionEndpointId } from "@/lib/fal/generation-models";
 import {
   assertSafeFalEndpointId,
   buildFluxSchnellQueueInput,
@@ -24,50 +20,14 @@ const bodySchema = z.discriminatedUnion("intent", [
     numInferenceSteps: z.number().min(1).max(12),
   }),
   z.object({
-    intent: z.literal("text-to-video"),
-    prompt: z.string().min(1).max(8000),
-    duration: z.enum(["4s", "6s", "8s"]),
-    resolution: z.enum(["720p", "1080p"]),
-    silent: z.boolean(),
-    aspectRatio: z.enum(["16:9", "9:16"]),
-  }),
-  z.object({
-    intent: z.literal("image-to-video"),
-    imageUrl: z.string().min(10).max(500_000),
-    prompt: z.string().max(5000).optional(),
-    durationSec: z.number().int().min(2).max(15),
-    resolution: z.enum(["720p", "1080p"]),
-  }),
-  z.object({
-    intent: z.literal("video-to-video"),
-    videoUrl: z.string().min(10).max(500_000),
-    prompt: z.string().max(5000).optional(),
-    durationSec: z.number().int().min(2).max(15),
-    resolution: z.enum(["720p", "1080p"]),
-  }),
-  z.object({
     intent: z.literal("image-to-text"),
     imageUrl: z.string().min(10).max(500_000),
   }),
 ]);
 
-function extractVideoUrl(data: unknown): string | undefined {
-  const v = (data as { video?: { url?: string } }).video?.url;
-  return typeof v === "string" ? v : undefined;
-}
-
 function extractCaption(data: unknown): string | undefined {
   const r = (data as { results?: unknown }).results;
   return typeof r === "string" ? r : undefined;
-}
-
-/** WAN rejects explicit nulls on unused optional fields; fal 422 surfaces as statusText-only errors. */
-const WAN_FALLBACK_PROMPT =
-  "Subtle cinematic motion, sharp detail, advertising polish";
-
-function wanPromptFromOptional(prompt: string | undefined): string {
-  const t = prompt?.trim();
-  return t && t.length > 0 ? t : WAN_FALLBACK_PROMPT;
 }
 
 function formatFalClientError(e: unknown): string {
@@ -106,35 +66,7 @@ function formatFalClientError(e: unknown): string {
   return e instanceof Error ? e.message : "Fal request failed";
 }
 
-function buildWanMotionInput(
-  intent: "image-to-video" | "video-to-video",
-  payload: {
-    imageUrl?: string;
-    videoUrl?: string;
-    prompt?: string | undefined;
-    resolution: "720p" | "1080p";
-    durationSec: number;
-  },
-): Record<string, unknown> {
-  const input: Record<string, unknown> = {
-    prompt: wanPromptFromOptional(payload.prompt),
-    resolution: payload.resolution,
-    duration: payload.durationSec,
-    enable_prompt_expansion: true,
-    enable_safety_checker: true,
-  };
-  if (intent === "image-to-video") {
-    input.image_url = payload.imageUrl;
-  } else {
-    input.video_url = payload.videoUrl;
-  }
-  return input;
-}
-
-/**
- * Unified fal proxy for workflow generation routing (text/image/video crosses).
- * Defaults favour inexpensive tiers (Flux Schnell, Veo 3.1 Lite silent 720p, WAN shortest duration).
- */
+/** Fal proxy for workflow runs: Flux image generation + Florence captions only. */
 export async function POST(req: Request) {
   if (!process.env.FAL_KEY) {
     return NextResponse.json(
@@ -177,66 +109,6 @@ export async function POST(req: Request) {
           );
         }
         return NextResponse.json({ image: { url } });
-      }
-      case "text-to-video": {
-        const endpointId = getFalTextToVideoEndpointId();
-        assertSafeFalEndpointId(endpointId);
-        let duration = payload.duration;
-        let resolution = payload.resolution;
-        if (resolution === "1080p" && duration !== "8s") {
-          duration = "8s";
-        }
-        const result = await fal.subscribe(endpointId, {
-          input: {
-            prompt: payload.prompt,
-            aspect_ratio: payload.aspectRatio,
-            duration,
-            resolution,
-            generate_audio: !payload.silent,
-          },
-          logs: true,
-          priority,
-        });
-        const url = extractVideoUrl(result.data);
-        if (!url) {
-          return NextResponse.json(
-            { error: "Fal did not return a video URL" },
-            { status: 502 },
-          );
-        }
-        return NextResponse.json({ video: { url } });
-      }
-      case "image-to-video":
-      case "video-to-video": {
-        const endpointId = getFalImageToVideoEndpointId();
-        assertSafeFalEndpointId(endpointId);
-        const wanInput =
-          payload.intent === "image-to-video"
-            ? buildWanMotionInput("image-to-video", {
-                imageUrl: payload.imageUrl,
-                prompt: payload.prompt,
-                resolution: payload.resolution,
-                durationSec: payload.durationSec,
-              })
-            : buildWanMotionInput("video-to-video", {
-                videoUrl: payload.videoUrl,
-                prompt: payload.prompt,
-                resolution: payload.resolution,
-                durationSec: payload.durationSec,
-              });
-        const result = await fal.subscribe(endpointId, {
-          input: wanInput,
-          logs: true,
-          priority,
-        });
-        const url = extractVideoUrl(result.data);
-        if (!url) {
-          return NextResponse.json(
-            { error: "Fal did not return a video URL" },
-            { status: 502 },
-          );
-        }
-        return NextResponse.json({ video: { url } });
       }
       case "image-to-text": {
         const endpointId = getFalImageCaptionEndpointId();

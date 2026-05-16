@@ -227,25 +227,6 @@ export async function persistWorkflowRunArtifacts(
       } catch {
         /* CORS / offline */
       }
-    } else if (out.type === "video") {
-      try {
-        const res = await fetch(out.url);
-        if (res.ok) {
-          push({
-            runId,
-            workflowId,
-            workflowName,
-            createdAt,
-            nodeId,
-            nodeLabel,
-            nodeKind,
-            fileName: `${slug}-${nodeId.slice(0, 8)}-video.mp4`,
-            blob: await res.blob(),
-          });
-        }
-      } catch {
-        /* skip */
-      }
     } else if (out.type === "generation") {
       if (out.text?.trim()) {
         push({
@@ -276,26 +257,6 @@ export async function persistWorkflowRunArtifacts(
               nodeLabel,
               nodeKind,
               fileName: `${slug}-${nodeId.slice(0, 8)}-generated.${ext}`,
-              blob: await res.blob(),
-            });
-          }
-        } catch {
-          /* skip */
-        }
-      }
-      if (out.videoUrl) {
-        try {
-          const res = await fetch(out.videoUrl);
-          if (res.ok) {
-            push({
-              runId,
-              workflowId,
-              workflowName,
-              createdAt,
-              nodeId,
-              nodeLabel,
-              nodeKind,
-              fileName: `${slug}-${nodeId.slice(0, 8)}-generated-video.mp4`,
               blob: await res.blob(),
             });
           }
@@ -338,28 +299,6 @@ export async function persistWorkflowRunArtifacts(
           /* skip */
         }
         i++;
-      }
-      let v = 0;
-      for (const url of out.videoUrls) {
-        try {
-          const res = await fetch(url);
-          if (res.ok) {
-            push({
-              runId,
-              workflowId,
-              workflowName,
-              createdAt,
-              nodeId,
-              nodeLabel,
-              nodeKind,
-              fileName: `${slug}-${nodeId.slice(0, 8)}-input-vid-${v}.webm`,
-              blob: await res.blob(),
-            });
-          }
-        } catch {
-          /* skip */
-        }
-        v++;
       }
     } else if (out.type === "bundle") {
       for (const f of out.files) {
@@ -473,7 +412,7 @@ export async function getLatestRunArtifactRecordsForWorkflow(
 
 /**
  * Rebuild {@link RuntimeOutputs} from IndexedDB blobs (object URLs) for the current graph.
- * Does not restore `publish` / `publishYoutube` metadata on bundle outputs.
+ * Does not restore `publish` metadata on bundle outputs.
  */
 export async function rehydrateRuntimeOutputsFromArtifacts(
   records: GeneratedMediaRecord[],
@@ -499,7 +438,6 @@ export async function rehydrateRuntimeOutputsFromArtifacts(
     if (kind === "mediaInput") {
       let text = "";
       const imageUrls: string[] = [];
-      const videoUrls: string[] = [];
       const sorted = [...recs].sort((a, b) => a.fileName.localeCompare(b.fileName));
       for (const r of sorted) {
         if (r.fileName.endsWith("-generated-copy.txt")) continue;
@@ -507,30 +445,23 @@ export async function rehydrateRuntimeOutputsFromArtifacts(
           text = await r.blob.text();
         } else if (r.fileName.includes("-input-img-")) {
           imageUrls.push(URL.createObjectURL(r.blob));
-        } else if (r.fileName.includes("-input-vid-")) {
-          videoUrls.push(URL.createObjectURL(r.blob));
         }
       }
-      out[nodeId] = { type: "mediaInput", text, imageUrls, videoUrls };
+      out[nodeId] = { type: "mediaInput", text, imageUrls };
       continue;
     }
 
     if (kind === "generationBlock") {
       let text: string | undefined;
       let imageUrl: string | undefined;
-      let videoUrl: string | undefined;
       for (const r of recs) {
         if (r.fileName.includes("-generated-copy.txt")) {
           text = await r.blob.text();
-        } else if (r.fileName.includes("-generated-video") || r.fileName.includes("generated-video")) {
-          videoUrl = URL.createObjectURL(r.blob);
-        } else if (r.fileName.endsWith(".mp4") && r.fileName.includes("-video")) {
-          videoUrl = URL.createObjectURL(r.blob);
         } else if (/\.(jpe?g|png)$/i.test(r.fileName) && r.fileName.includes("-generated.")) {
           imageUrl = URL.createObjectURL(r.blob);
         }
       }
-      out[nodeId] = { type: "generation", text, imageUrl, videoUrl };
+      out[nodeId] = { type: "generation", text, imageUrl };
       continue;
     }
 

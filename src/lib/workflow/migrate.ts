@@ -77,7 +77,6 @@ function migrateNode(node: z.infer<typeof v1WorkflowDocumentSchema>["nodes"][num
         label: d.label,
         value: d.value,
         images: [],
-        videos: [],
       },
     };
   }
@@ -94,7 +93,6 @@ function migrateNode(node: z.infer<typeof v1WorkflowDocumentSchema>["nodes"][num
           d.dataUrl != null && d.dataUrl !== ""
             ? [{ dataUrl: d.dataUrl, fileName: d.fileName }]
             : [],
-        videos: [],
       },
     };
   }
@@ -108,10 +106,6 @@ function migrateNode(node: z.infer<typeof v1WorkflowDocumentSchema>["nodes"][num
         label: d.label,
         value: "",
         images: [],
-        videos:
-          d.dataUrl != null && d.dataUrl !== ""
-            ? [{ dataUrl: d.dataUrl, fileName: d.fileName }]
-            : [],
       },
     };
   }
@@ -126,11 +120,6 @@ function migrateNode(node: z.infer<typeof v1WorkflowDocumentSchema>["nodes"][num
         suffix: d.suffix,
         imageSize: d.imageSize,
         numInferenceSteps: d.numInferenceSteps,
-        videoDuration: "4s",
-        videoResolution: "720p",
-        videoSilent: true,
-        wanDurationSec: 2,
-        wanResolution: "720p",
       },
     };
   }
@@ -186,23 +175,6 @@ export function coerceFluxToGeneration(raw: unknown): unknown {
         imageSize: typeof d.imageSize === "string" ? d.imageSize : "landscape_4_3",
         numInferenceSteps:
           typeof d.numInferenceSteps === "number" ? d.numInferenceSteps : 2,
-        videoDuration:
-          d.videoDuration === "4s" || d.videoDuration === "6s" || d.videoDuration === "8s"
-            ? d.videoDuration
-            : "4s",
-        videoResolution:
-          d.videoResolution === "1080p" || d.videoResolution === "720p"
-            ? d.videoResolution
-            : "720p",
-        videoSilent: typeof d.videoSilent === "boolean" ? d.videoSilent : true,
-        wanDurationSec:
-          typeof d.wanDurationSec === "number"
-            ? Math.min(15, Math.max(2, Math.floor(d.wanDurationSec)))
-            : 2,
-        wanResolution:
-          d.wanResolution === "1080p" || d.wanResolution === "720p"
-            ? d.wanResolution
-            : "720p",
       },
     };
   });
@@ -210,11 +182,65 @@ export function coerceFluxToGeneration(raw: unknown): unknown {
   return { ...doc, nodes: nextNodes };
 }
 
-function bumpWorkflowVersion2To3(raw: unknown): unknown {
+function bumpWorkflowVersion2To4(raw: unknown): unknown {
   if (raw === null || typeof raw !== "object") return raw;
   const doc = raw as Record<string, unknown>;
   if (doc.version === 2) return { ...doc, version: WORKFLOW_DOCUMENT_VERSION };
   return raw;
+}
+
+/** Drops video pins / media payloads so documents validate against photo-only v4. */
+function stripLegacyVideoArtifacts(raw: unknown): unknown {
+  if (raw === null || typeof raw !== "object") return raw;
+  const doc = raw as Record<string, unknown>;
+
+  const edges = Array.isArray(doc.edges)
+    ? (doc.edges as Record<string, unknown>[]).filter((e) => {
+        const sh = e.sourceHandle ?? null;
+        const th = e.targetHandle ?? null;
+        return sh !== "video" && th !== "video";
+      })
+    : [];
+
+  const nodes = Array.isArray(doc.nodes)
+    ? (doc.nodes as Record<string, unknown>[]).map((node) => {
+        const data = node.data as Record<string, unknown> | undefined;
+        if (!data || typeof data !== "object") return node;
+        if (data.kind === "mediaInput") {
+          const { videos: _v, ...rest } = data;
+          return {
+            ...node,
+            data: {
+              ...rest,
+              images: Array.isArray(rest.images) ? rest.images : [],
+            },
+          };
+        }
+        if (data.kind === "generationBlock") {
+          const {
+            videoDuration: _vd,
+            videoResolution: _vr,
+            videoSilent: _vs,
+            wanDurationSec: _wd,
+            wanResolution: _wr,
+            ...rest
+          } = data;
+          return { ...node, data: rest };
+        }
+        return node;
+      })
+    : [];
+
+  return {
+    ...doc,
+    version: WORKFLOW_DOCUMENT_VERSION,
+    nodes,
+    edges,
+    updatedAt:
+      typeof doc.updatedAt === "string" && doc.updatedAt.trim()
+        ? doc.updatedAt
+        : new Date().toISOString(),
+  };
 }
 
 /** Converts legacy per-node `imageDataUrl` / `videoDataUrl` into `images` / `videos` arrays. */
@@ -232,15 +258,19 @@ export function coerceWorkflowDocumentRaw(raw: unknown): unknown {
     const d = data as Record<string, unknown>;
     if (d.kind !== "mediaInput") return node;
 
-    if (Array.isArray(d.images) && Array.isArray(d.videos)) {
-      return node;
+    if (Array.isArray(d.images) && !d.imageDataUrl && !d.videoDataUrl) {
+      const { videos: _drop, ...rest } = d;
+      return {
+        ...n,
+        data: {
+          ...rest,
+          images: Array.isArray(rest.images) ? rest.images : [],
+        },
+      };
     }
 
     const images: { dataUrl: string; fileName?: string }[] = Array.isArray(d.images)
       ? (d.images as { dataUrl: string; fileName?: string }[])
-      : [];
-    const videos: { dataUrl: string; fileName?: string }[] = Array.isArray(d.videos)
-      ? (d.videos as { dataUrl: string; fileName?: string }[])
       : [];
 
     if (
@@ -252,28 +282,19 @@ export function coerceWorkflowDocumentRaw(raw: unknown): unknown {
         fileName: typeof d.imageFileName === "string" ? d.imageFileName : undefined,
       });
     }
-    if (
-      typeof d.videoDataUrl === "string" &&
-      d.videoDataUrl !== ""
-    ) {
-      videos.push({
-        dataUrl: d.videoDataUrl,
-        fileName: typeof d.videoFileName === "string" ? d.videoFileName : undefined,
-      });
-    }
 
     const clean = { ...d } as Record<string, unknown>;
     delete clean.imageDataUrl;
     delete clean.imageFileName;
     delete clean.videoDataUrl;
     delete clean.videoFileName;
+    delete clean.videos;
 
     return {
       ...n,
       data: {
         ...clean,
         images,
-        videos,
       },
     };
   });
@@ -282,20 +303,19 @@ export function coerceWorkflowDocumentRaw(raw: unknown): unknown {
 }
 
 /**
- * Accept v3 workflows; coerce legacy v2 Flux nodes → generation blocks;
- * migrate very old v1 documents (split input kinds).
+ * Accept current workflows; coerce legacy nodes; strip obsolete video wiring for v4.
  */
 export function normalizeWorkflowDocument(raw: unknown): WorkflowDocument | null {
-  const coerced = bumpWorkflowVersion2To3(
-    coerceFluxToGeneration(coerceWorkflowDocumentRaw(raw)),
+  const coerced = stripLegacyVideoArtifacts(
+    bumpWorkflowVersion2To4(coerceFluxToGeneration(coerceWorkflowDocumentRaw(raw))),
   );
-  const v3 = workflowDocumentSchema.safeParse(coerced);
-  if (v3.success) return v3.data;
+  const v4 = workflowDocumentSchema.safeParse(coerced);
+  if (v4.success) return v4.data;
 
   const v1 = v1WorkflowDocumentSchema.safeParse(raw);
   if (!v1.success) return null;
 
   const migrated = migrateV1Workflow(v1.data);
-  const check = workflowDocumentSchema.safeParse(migrated);
+  const check = workflowDocumentSchema.safeParse(stripLegacyVideoArtifacts(migrated));
   return check.success ? check.data : null;
 }

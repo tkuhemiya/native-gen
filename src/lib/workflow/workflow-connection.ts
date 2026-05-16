@@ -4,17 +4,15 @@ import type { CanvasNodeType } from "@/lib/workflow/schema";
 export function sourceMediaLane(
   sourceType: string,
   sourceHandle: string | null | undefined,
-): "text" | "image" | "video" | "wildcard" {
+): "text" | "image" | "wildcard" {
   if (sourceType === "generationBlock") {
     if (sourceHandle === "text") return "text";
     if (sourceHandle === "image") return "image";
-    if (sourceHandle === "video") return "video";
     return "wildcard";
   }
   if (sourceType === "mediaInput") {
     if (sourceHandle === "text") return "text";
     if (sourceHandle === "image") return "image";
-    if (sourceHandle === "video") return "video";
     return "wildcard";
   }
   return "wildcard";
@@ -23,17 +21,15 @@ export function sourceMediaLane(
 function targetMediaLane(
   targetType: string,
   targetHandle: string | null | undefined,
-): "text" | "image" | "video" | null {
+): "text" | "image" | null {
   if (targetType === "generationBlock") {
     if (targetHandle === "text" || targetHandle == null) return "text";
     if (targetHandle === "image") return "image";
-    if (targetHandle === "video") return "video";
     return null;
   }
   if (targetType === "platformExport") {
     if (targetHandle === "text" || targetHandle == null) return "text";
     if (targetHandle === "image") return "image";
-    if (targetHandle === "video") return "video";
     return null;
   }
   return null;

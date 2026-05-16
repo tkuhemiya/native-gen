@@ -1,7 +1,8 @@
+import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { loadSocialAccountsBlob } from "@/lib/oauth/server-store";
+import { loadSocialAccountsFromRequest } from "@/lib/oauth/request-social";
 import { humanizeMetaPublishError } from "@/lib/publish/meta-errors";
 import {
   publishFacebookPagePhoto,
@@ -25,7 +26,7 @@ const bodySchema = z.object({
   caption: z.string().max(2200).optional().default(""),
 });
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   const reqId = resolveRequestId(request);
   let json: unknown;
   try {
@@ -47,7 +48,7 @@ export async function POST(request: Request) {
 
   const { destination, pageId, imageUrls, caption } = parsed.data;
 
-  const blob = await loadSocialAccountsBlob();
+  const blob = loadSocialAccountsFromRequest(request);
   if (!blob.meta?.pages.length) {
     publishLog("warn", reqId, "publish_meta_not_connected");
     return NextResponse.json(

@@ -1,9 +1,64 @@
 "use client";
 
-import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
+import {
+  type ClipboardEvent,
+  type KeyboardEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 
-import type { WorkflowDocument } from "@/lib/workflow/schema";
+import type { MediaInputAsset, WorkflowDocument } from "@/lib/workflow/schema";
 import type { WorkflowAgentStreamEvent } from "@/lib/workflow/workflow-agent";
+
+const MAX_COMPOSER_IMAGES = 8;
+const MAX_IMAGE_DIMENSION = 1600;
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result ?? ""));
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(file);
+  });
+}
+
+function downscaleImageDataUrl(dataUrl: string, maxDim: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      let w = img.naturalWidth || img.width;
+      let h = img.naturalHeight || img.height;
+      if (w <= maxDim && h <= maxDim) {
+        resolve(dataUrl);
+        return;
+      }
+      const scale = Math.min(maxDim / w, maxDim / h);
+      w = Math.round(w * scale);
+      h = Math.round(h * scale);
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        resolve(dataUrl);
+        return;
+      }
+      ctx.drawImage(img, 0, 0, w, h);
+      resolve(canvas.toDataURL("image/jpeg", 0.88));
+    };
+    img.onerror = () => reject(new Error("Image decode failed"));
+    img.src = dataUrl;
+  });
+}
+
+async function imageFileToComposerAsset(file: File): Promise<MediaInputAsset | null> {
+  if (!file.type.startsWith("image/")) return null;
+  const raw = await readFileAsDataUrl(file);
+  const dataUrl = await downscaleImageDataUrl(raw, MAX_IMAGE_DIMENSION);
+  return { dataUrl, fileName: file.name };
+}
 
 type AgentResponse = {
   workflow?: WorkflowDocument;
@@ -31,6 +86,7 @@ type ChatTurn = {
   id: string;
   role: "user" | "assistant";
   content: string;
+  images?: MediaInputAsset[];
 };
 
 function cid() {
@@ -167,7 +223,9 @@ export function WorkflowAgentPanel({
 }: WorkflowAgentPanelProps) {
   const [messages, setMessages] = useState<ChatTurn[]>([]);
   const [draft, setDraft] = useState("");
+  const [pendingComposerImages, setPendingComposerImages] = useState<MediaInputAsset[]>([]);
   const [busy, setBusy] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [lastAgentLog, setLastAgentLog] = useState<string[] | null>(null);
   const [thinkingText, setThinkingText] = useState("");
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
@@ -180,18 +238,59 @@ export function WorkflowAgentPanel({
     el.scrollTop = el.scrollHeight;
   }, [messages, busy, lastAgentLog, thinkingText, streamTools, thinkingExpanded]);
 
+  const appendComposerImages = useCallback(async (files: FileList | File[] | null | undefined) => {
+    if (!files?.length) return;
+    const batch: MediaInputAsset[] = [];
+    for (const file of Array.from(files)) {
+      const asset = await imageFileToComposerAsset(file);
+      if (asset) batch.push(asset);
+    }
+    if (!batch.length) return;
+    setPendingComposerImages((prev) => [...prev, ...batch].slice(0, MAX_COMPOSER_IMAGES));
+  }, []);
+
+  const removePendingImageAt = useCallback((index: number) => {
+    setPendingComposerImages((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const onComposerPaste = useCallback(
+    async (e: ClipboardEvent<HTMLTextAreaElement>) => {
+      const dt = e.clipboardData;
+      if (!dt) return;
+      const files: File[] = [];
+      for (const item of Array.from(dt.items)) {
+        if (item.kind !== "file") continue;
+        const f = item.getAsFile();
+        if (f?.type.startsWith("image/")) files.push(f);
+      }
+      if (!files.length) return;
+      e.preventDefault();
+      await appendComposerImages(files);
+    },
+    [appendComposerImages],
+  );
+
   const send = useCallback(async () => {
     const text = draft.trim();
-    if (!text) {
-      onStatus("Describe the campaign or creative flow first.");
+    const attachmentsToSend = [...pendingComposerImages];
+
+    if (!text && attachmentsToSend.length === 0) {
+      onStatus("Add a message or paste / attach a reference image.");
       return;
     }
 
-    const userTurn: ChatTurn = { id: cid(), role: "user", content: text };
+    const displayContent = text || "(Image attached)";
+    const userTurn: ChatTurn = {
+      id: cid(),
+      role: "user",
+      content: displayContent,
+      ...(attachmentsToSend.length ? { images: attachmentsToSend } : {}),
+    };
     const priorForApi = messages.map(({ role, content }) => ({ role, content }));
 
     setMessages((m) => [...m, userTurn]);
     setDraft("");
+    setPendingComposerImages([]);
     setBusy(true);
     setLastAgentLog([]);
     setThinkingText("");
@@ -199,7 +298,7 @@ export function WorkflowAgentPanel({
     setStreamTools([]);
     onStatus("Contacting the workflow agent…");
 
-    const apiPayload = [...priorForApi, { role: "user" as const, content: text }];
+    const apiPayload = [...priorForApi, { role: "user" as const, content: displayContent }];
     const workflow = getCanvasSnapshot();
 
     const finalizeSuccess = async (body: AgentResponse & { workflow: WorkflowDocument }) => {
@@ -213,7 +312,7 @@ export function WorkflowAgentPanel({
       const assistantContent =
         body.source === "openai"
           ? [
-              "Applied the workflow to the canvas. Ask for tweaks (e.g. add TikTok export, reorder steps).",
+              "Applied the workflow to the canvas. Ask for tweaks (e.g. more caption variants, TikTok crop, optional motion).",
               body.note,
             ]
               .filter(Boolean)
@@ -238,6 +337,7 @@ export function WorkflowAgentPanel({
         body: JSON.stringify({
           messages: apiPayload,
           stream: true,
+          ...(attachmentsToSend.length ? { composerImages: attachmentsToSend } : {}),
           ...(workflow ? { workflow } : {}),
         }),
       });
@@ -299,6 +399,13 @@ export function WorkflowAgentPanel({
                 ]);
                 break;
               case "tool_end":
+                if (!ev.ok) {
+                  console.error("[workflow-agent] Tool call failed", {
+                    toolName: ev.toolName,
+                    toolCallId: ev.toolCallId,
+                    summary: ev.summary,
+                  });
+                }
                 setStreamTools((prev) =>
                   prev.map((trow) =>
                     trow.toolCallId === ev.toolCallId
@@ -424,7 +531,14 @@ export function WorkflowAgentPanel({
     } finally {
       setBusy(false);
     }
-  }, [draft, getCanvasSnapshot, messages, onApplyDocument, onStatus]);
+  }, [
+    draft,
+    pendingComposerImages,
+    getCanvasSnapshot,
+    messages,
+    onApplyDocument,
+    onStatus,
+  ]);
 
   const onComposerKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -439,15 +553,15 @@ export function WorkflowAgentPanel({
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Workflow agent
+              Posts workflow agent
             </p>
             <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
-              Chat builds and refines your graph.
+              Describe hooks and creatives; paste or attach reference images — they load into the Brief / posts node after send. Runs are Flux stills plus optional captions only.
             </p>
           </div>
           <div
             className="shrink-0 text-right text-[9px] leading-tight text-muted-foreground"
-            title="Wires must match pin types (text / image / video)"
+            title="Wires must match pin types (text / image)"
           >
             <span className="font-semibold uppercase tracking-wide text-muted-foreground/90">
               Pins
@@ -455,10 +569,7 @@ export function WorkflowAgentPanel({
             <p className="mt-0.5">
               <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 align-middle" />{" "}
               Text ·{" "}
-              <span className="inline-block h-2 w-2 rounded-full bg-sky-500 align-middle" />{" "}
-              Image ·{" "}
-              <span className="inline-block h-2 w-2 rounded-full bg-amber-500 align-middle" />{" "}
-              Video
+              <span className="inline-block h-2 w-2 rounded-full bg-sky-500 align-middle" /> Image
             </p>
           </div>
         </div>
@@ -484,7 +595,20 @@ export function WorkflowAgentPanel({
                   : "max-w-[95%] rounded-lg bg-muted px-2.5 py-2 text-xs leading-relaxed text-foreground"
               }
             >
-              {m.content}
+              {m.images?.length ? (
+                <div className="mb-2 flex flex-wrap gap-1">
+                  {m.images.map((im, idx) => (
+                    // eslint-disable-next-line @next/next/no-img-element -- chat thumbnails from data URLs
+                    <img
+                      key={`${im.dataUrl.slice(0, 48)}-${idx}`}
+                      src={im.dataUrl}
+                      alt=""
+                      className="max-h-16 max-w-[5.5rem] rounded border border-primary-foreground/25 object-cover"
+                    />
+                  ))}
+                </div>
+              ) : null}
+              <span className="whitespace-pre-wrap">{m.content}</span>
             </div>
           </div>
         ))}
@@ -519,15 +643,61 @@ export function WorkflowAgentPanel({
       </div>
 
       <div className="border-t border-border p-3">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          aria-hidden
+          onChange={(e) => {
+            void appendComposerImages(e.target.files);
+            e.target.value = "";
+          }}
+        />
+        {pendingComposerImages.length ? (
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {pendingComposerImages.map((im, idx) => (
+              <span key={`${im.dataUrl.slice(0, 40)}-${idx}`} className="relative inline-block">
+                {/* eslint-disable-next-line @next/next/no-img-element -- composer preview */}
+                <img
+                  src={im.dataUrl}
+                  alt=""
+                  className="h-14 w-14 rounded-md border border-border object-cover"
+                />
+                <button
+                  type="button"
+                  disabled={busy}
+                  className="absolute -right-1 -top-1 flex size-5 items-center justify-center rounded-full border border-border bg-background text-[10px] font-bold leading-none shadow hover:bg-accent disabled:opacity-50"
+                  onClick={() => removePendingImageAt(idx)}
+                  aria-label="Remove attached image"
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        ) : null}
         <textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
+          onPaste={(e) => void onComposerPaste(e)}
           onKeyDown={onComposerKeyDown}
-          placeholder="Campaign brief or change…"
+          placeholder="Post idea, hooks, graph changes… (paste images here)"
           disabled={busy}
           rows={2}
           className="mb-2 max-h-[5.5rem] min-h-[2.75rem] w-full resize-y rounded-md border border-border bg-muted px-2 py-2 text-xs text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-60"
         />
+        <div className="mb-2 flex gap-2">
+          <button
+            type="button"
+            disabled={busy || pendingComposerImages.length >= MAX_COMPOSER_IMAGES}
+            className="flex-1 rounded-md border border-border bg-card px-2 py-1.5 text-[11px] font-medium text-card-foreground hover:bg-accent disabled:opacity-50"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            Attach image
+          </button>
+        </div>
         {busy ? (
           <AgentRunningFooterBar />
         ) : (

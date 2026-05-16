@@ -85,28 +85,6 @@ function useOutgoingHandleKinds(nodeId: string) {
       none,
       hasTextOut: kinds.has("text"),
       hasImageOut: kinds.has("image"),
-      hasVideoOut: kinds.has("video"),
-    };
-  }, [edges, nodeId]);
-}
-
-/** Incoming pins wired into this node — null targetHandle counts as text (legacy). */
-function useIncomingHandleKinds(nodeId: string) {
-  const edges = useEdges();
-  return useMemo(() => {
-    const kinds = new Set<string>();
-    for (const e of edges) {
-      if (e.target !== nodeId) continue;
-      const th = e.targetHandle;
-      kinds.add(th === null || th === undefined ? "text" : th);
-    }
-    const none = kinds.size === 0;
-    return {
-      kinds,
-      none,
-      hasText: kinds.has("text"),
-      hasImage: kinds.has("image"),
-      hasVideo: kinds.has("video"),
     };
   }, [edges, nodeId]);
 }
@@ -115,7 +93,6 @@ export function GenerationBlockNode(props: NodeProps<AppNode>) {
   const { data, id } = props;
   const { updateNodeData } = useReactFlow();
   const edgesOut = useOutgoingHandleKinds(id);
-  const edgesIn = useIncomingHandleKinds(id);
   const runOut = useNodeRunOutput(id);
   const { activeNodeId, phase } = useWorkflowRunContext();
   const runningHere = phase === "running" && activeNodeId === id;
@@ -123,14 +100,6 @@ export function GenerationBlockNode(props: NodeProps<AppNode>) {
   if (data.kind !== "generationBlock") return null;
 
   const openImageSection = edgesOut.hasImageOut || edgesOut.none;
-  const openVideoSection = edgesOut.hasVideoOut || edgesOut.none;
-
-  /** Motion-from-media path uses shorter discrete durations (WAN); text-only clip uses preset tiers (Veo). */
-  const videoUsesMotionMedia =
-    edgesOut.hasVideoOut && (edgesIn.hasImage || edgesIn.hasVideo);
-
-  const syncResolution = (v: "720p" | "1080p") =>
-    updateNodeData(id, { ...data, videoResolution: v, wanResolution: v });
 
   return (
     <div
@@ -139,7 +108,7 @@ export function GenerationBlockNode(props: NodeProps<AppNode>) {
       }`}
     >
       <div className="relative mb-2 flex gap-3">
-        <div className="flex shrink-0 flex-col justify-between gap-4 py-1">
+        <div className="flex shrink-0 flex-col justify-between gap-8 py-1">
           <Handle
             type="target"
             position={Position.Left}
@@ -152,17 +121,9 @@ export function GenerationBlockNode(props: NodeProps<AppNode>) {
             type="target"
             position={Position.Left}
             id="image"
-            style={{ top: "50%" }}
+            style={{ bottom: 14, top: "auto" }}
             title="Image in"
             className="!left-[-6px] !h-3 !w-3 !border-2 !border-card !bg-sky-500"
-          />
-          <Handle
-            type="target"
-            position={Position.Left}
-            id="video"
-            style={{ bottom: 14, top: "auto" }}
-            title="Video in"
-            className="!left-[-6px] !h-3 !w-3 !border-2 !border-card !bg-amber-500"
           />
         </div>
 
@@ -172,15 +133,12 @@ export function GenerationBlockNode(props: NodeProps<AppNode>) {
               Generate
             </span>
             <span className="text-[9px] text-muted-foreground">
-              Routes by wires
+              Flux · image / caption
             </span>
           </div>
-          {!edgesOut.none &&
-          edgesOut.hasTextOut &&
-          !edgesOut.hasImageOut &&
-          !edgesOut.hasVideoOut ? (
+          {!edgesOut.none && edgesOut.hasTextOut && !edgesOut.hasImageOut ? (
             <p className="mb-2 rounded-md bg-muted/80 px-2 py-1 text-[9px] leading-snug text-muted-foreground">
-              Text-only output connected — expand Image or Video below after wiring those pins.
+              Text-only output connected — expand Image below after wiring the image pin if you need visuals.
             </p>
           ) : null}
           <label className="block text-[10px] font-medium text-muted-foreground">
@@ -195,7 +153,7 @@ export function GenerationBlockNode(props: NodeProps<AppNode>) {
             shouldExpand={openImageSection}
             className="mt-2 rounded-md border border-border bg-muted/20 open:bg-muted/35"
             summaryClassName={SUMMARY_CLS}
-            summary="Image output · aspect & steps"
+            summary="Image · aspect & steps"
           >
             <div className="border-t border-border px-2 pb-2 pt-1">
               <div className="grid grid-cols-2 gap-2">
@@ -242,99 +200,9 @@ export function GenerationBlockNode(props: NodeProps<AppNode>) {
               </div>
             </div>
           </CollapsibleSection>
-
-          <CollapsibleSection
-            shouldExpand={openVideoSection}
-            className="mt-2 rounded-md border border-border bg-muted/20 open:bg-muted/35"
-            summaryClassName={SUMMARY_CLS}
-            summary="Video output · duration & resolution"
-          >
-            <div className="space-y-2 border-t border-border px-2 pb-2 pt-2">
-              <p className="text-[9px] leading-snug text-muted-foreground">
-                {videoUsesMotionMedia
-                  ? "Clip settings apply while animating a wired picture or video."
-                  : edgesIn.none
-                    ? "Clip settings apply when generating from text. Wiring picture or video on the left switches how length is counted."
-                    : "Clip settings apply when generating from text only."}
-              </p>
-              <div className="grid grid-cols-2 gap-2">
-                <label className="flex flex-col gap-1 text-[10px] text-muted-foreground">
-                  Duration
-                  {videoUsesMotionMedia ? (
-                    <select
-                      className="rounded-md border border-border bg-card px-1 py-1 text-xs text-card-foreground"
-                      value={String(data.wanDurationSec)}
-                      onChange={(e) =>
-                        updateNodeData(id, {
-                          ...data,
-                          wanDurationSec: Number(e.target.value) || 2,
-                        })
-                      }
-                    >
-                      {Array.from({ length: 14 }, (_, i) => i + 2).map((s) => (
-                        <option key={s} value={String(s)}>
-                          {s} seconds
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <select
-                      className="rounded-md border border-border bg-card px-1 py-1 text-xs text-card-foreground"
-                      value={data.videoDuration}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        if (v === "4s" || v === "6s" || v === "8s") {
-                          updateNodeData(id, { ...data, videoDuration: v });
-                        }
-                      }}
-                    >
-                      <option value="4s">4 seconds</option>
-                      <option value="6s">6 seconds</option>
-                      <option value="8s">8 seconds</option>
-                    </select>
-                  )}
-                </label>
-                <label className="flex flex-col gap-1 text-[10px] text-muted-foreground">
-                  Resolution
-                  <select
-                    className="rounded-md border border-border bg-card px-1 py-1 text-xs text-card-foreground"
-                    value={
-                      videoUsesMotionMedia ? data.wanResolution : data.videoResolution
-                    }
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      if (v === "720p" || v === "1080p") syncResolution(v);
-                    }}
-                  >
-                    <option value="720p">720p</option>
-                    <option value="1080p">
-                      {videoUsesMotionMedia ? "1080p" : "1080p · uses longest clip length"}
-                    </option>
-                  </select>
-                </label>
-              </div>
-              {!videoUsesMotionMedia ? (
-                <label className="flex items-center gap-2 text-[10px] text-muted-foreground">
-                  <input
-                    type="checkbox"
-                    className="nodrag nopan rounded border-border"
-                    checked={!data.videoSilent}
-                    title="Turn off to skip audio — often cheaper"
-                    onChange={(e) =>
-                      updateNodeData(id, {
-                        ...data,
-                        videoSilent: !e.target.checked,
-                      })
-                    }
-                  />
-                  Include audio
-                </label>
-              ) : null}
-            </div>
-          </CollapsibleSection>
         </div>
 
-        <div className="flex shrink-0 flex-col justify-between gap-4 py-1">
+        <div className="flex shrink-0 flex-col justify-between gap-8 py-1">
           <Handle
             type="source"
             position={Position.Right}
@@ -347,17 +215,9 @@ export function GenerationBlockNode(props: NodeProps<AppNode>) {
             type="source"
             position={Position.Right}
             id="image"
-            style={{ top: "50%" }}
+            style={{ bottom: 14, top: "auto" }}
             title="Image out"
             className="!right-[-6px] !h-3 !w-3 !border-2 !border-card !bg-sky-500"
-          />
-          <Handle
-            type="source"
-            position={Position.Right}
-            id="video"
-            style={{ bottom: 14, top: "auto" }}
-            title="Video out"
-            className="!right-[-6px] !h-3 !w-3 !border-2 !border-card !bg-amber-500"
           />
         </div>
       </div>
@@ -376,15 +236,6 @@ export function GenerationBlockNode(props: NodeProps<AppNode>) {
               src={runOut.imageUrl}
               alt=""
               className="max-h-36 w-full rounded-md border border-border object-contain"
-            />
-          ) : null}
-          {runOut.videoUrl ? (
-            <video
-              src={runOut.videoUrl}
-              muted
-              controls
-              playsInline
-              className="max-h-40 w-full rounded-md border border-border object-contain"
             />
           ) : null}
         </div>

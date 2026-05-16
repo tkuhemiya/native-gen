@@ -6,7 +6,7 @@ Use this when moving beyond **developer/test** users on Meta or Google/YouTube.
 
 1. **Business verification** — Complete Meta Business verification if you request advanced permissions at scale.
 2. **App Review** — Request only the permissions you use (`pages_manage_posts`, `instagram_content_publish`, `pages_show_list`, etc.). Prepare a **screencast** showing the exact user flow in this app (connect → run workflow → publish).
-3. **Data handling** — Document token storage, retention, and deletion when users disconnect. File-based persistence (`NATIVE_GEN_OAUTH_PERSIST_PATH`) must be secured on disk; cookies are demo-grade only.
+3. **Data handling** — Document token storage, retention, and deletion when users disconnect. Tokens live in the browser (`localStorage`); publish/API routes receive them only in request headers from this origin.
 4. **Instagram requirements** — Test on **Instagram Business/Creator** accounts linked to a **Facebook Page**; personal Instagram accounts cannot use the Content Publishing API.
 5. **Rate limits & errors** — Log publish failures (request ids in responses) and surface Meta error messages with actionable hints.
 

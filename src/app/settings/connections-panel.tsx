@@ -4,18 +4,18 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { ThemeToggle } from "@/components/theme-toggle";
-import type { PublicAccountsStatus } from "@/lib/oauth/public-status";
-
-async function fetchAccounts(): Promise<PublicAccountsStatus> {
-  const res = await fetch("/api/oauth/accounts", { cache: "no-store" });
-  if (!res.ok) throw new Error("Failed to load connections");
-  return res.json();
-}
+import {
+  readBrowserSocialBlob,
+  stashOAuthMergeBase,
+  writeBrowserSocialBlob,
+} from "@/lib/oauth/browser-social-storage";
+import { socialBlobToPublicStatus, type PublicAccountsStatus } from "@/lib/oauth/public-status";
 
 const ERROR_LABELS: Record<string, string> = {
   google_not_configured: "YouTube / Google sign-in is not configured on this server (missing OAuth credentials).",
   meta_not_configured: "Facebook / Instagram sign-in is not configured on this server (missing Meta app credentials).",
-  oauth_secret: "Server is missing NATIVE_GEN_OAUTH_SECRET (32+ characters) — tokens cannot be stored safely.",
+  storage_blocked:
+    "Could not save tokens in this browser (private mode, blocked storage, or quota). Allow site data for localhost / your domain.",
   google_invalid_state: "Google sign-in failed (invalid session). Try again.",
   google_token_exchange: "Could not complete Google sign-in. Try again or re-connect your app in Google Cloud.",
   meta_invalid_state: "Meta sign-in failed (invalid session). Try again.",
@@ -32,31 +32,29 @@ function resolveError(code: string): string {
 }
 
 export function ConnectionsPanel({
-  initial,
   urlError,
   urlConnected,
 }: {
-  initial: PublicAccountsStatus;
   urlError?: string;
   urlConnected?: string;
 }) {
-  const [data, setData] = useState(initial);
+  const [data, setData] = useState<PublicAccountsStatus>(() =>
+    socialBlobToPublicStatus(readBrowserSocialBlob()),
+  );
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState<null | "google" | "meta">(null);
 
-  const disconnect = async (provider: "google" | "meta") => {
+  const disconnect = (provider: "google" | "meta") => {
     setActionError(null);
     setBusy(provider);
     try {
-      const res = await fetch("/api/oauth/disconnect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider }),
-      });
-      if (!res.ok) throw new Error();
-      setData(await fetchAccounts());
+      const blob = readBrowserSocialBlob();
+      if (provider === "google") delete blob.google;
+      else delete blob.meta;
+      writeBrowserSocialBlob(blob);
+      setData(socialBlobToPublicStatus(blob));
     } catch {
-      setActionError("Could not disconnect or refresh status.");
+      setActionError("Could not disconnect.");
     } finally {
       setBusy(null);
     }
@@ -91,9 +89,10 @@ export function ConnectionsPanel({
       <div>
         <h1 className="text-xl font-semibold tracking-tight text-foreground">Social accounts</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Connect publishing destinations. By default tokens live in an encrypted cookie on this browser
-          (demo-style). Set <code className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]">NATIVE_GEN_OAUTH_PERSIST_PATH</code>{" "}
-          to a writable JSON file path for server-side persistence (better for self-hosted demos).
+          Tokens for YouTube and Meta stay in this browser&apos;s{" "}
+          <code className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]">localStorage</code> (plaintext JSON).
+          Each API request sends them in a header — nothing OAuth-related is stored on the server. Use a trusted
+          device; malicious scripts on this origin could read tokens.
         </p>
         <p className="mt-2 text-sm text-muted-foreground">
           Live demo checklist: rehearse on venue Wi‑Fi, keep a short screen recording of Publish working as backup,
@@ -139,7 +138,7 @@ export function ConnectionsPanel({
               type="button"
               disabled={busy !== null}
               className="self-start rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium hover:bg-accent disabled:opacity-50"
-              onClick={() => void disconnect("google")}
+              onClick={() => disconnect("google")}
             >
               {busy === "google" ? "Disconnecting…" : "Disconnect"}
             </button>
@@ -147,6 +146,7 @@ export function ConnectionsPanel({
         ) : (
           <a
             href="/api/oauth/google/start"
+            onClick={() => stashOAuthMergeBase()}
             className="inline-flex rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
           >
             Connect YouTube
@@ -159,10 +159,21 @@ export function ConnectionsPanel({
           Facebook &amp; Instagram (Meta)
         </h2>
         <p className="text-xs text-muted-foreground">
-          One Meta login covers Facebook Pages and Instagram Business/Creator accounts linked to those Pages.
-          Publishing uses Page posting permissions — reconnect here if a newer build added scopes.
-          Full production may require Meta app review outside developer test users.
+          Instagram posts go through the Instagram Graph API: your IG must be a Professional (Business or Creator)
+          account linked to a Facebook Page you manage. One Meta login grants Page tokens we use for programmatic
+          publishing (single images or carousels). Production traffic usually needs Meta App Review.
         </p>
+        <details className="rounded-md border border-border/80 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          <summary className="cursor-pointer select-none font-medium text-foreground">
+            Before connecting Instagram
+          </summary>
+          <ol className="mt-2 list-decimal space-y-1.5 pl-4 leading-relaxed">
+            <li>In Instagram: switch to a Professional account if you have not already.</li>
+            <li>In Meta Business Suite (or Facebook Pages): create or open a Facebook Page and link that Instagram account.</li>
+            <li>In Meta Developer Console: add your Meta app OAuth redirect URLs and scope testers / Pages while in Development mode until App Review completes.</li>
+            <li>Use &quot;Connect Facebook &amp; Instagram&quot; below with a user who is admin of the Page and grant Page permissions.</li>
+          </ol>
+        </details>
         {data.meta.connected ? (
           <div className="flex flex-col gap-3 text-sm">
             <p className="text-foreground">
@@ -191,7 +202,7 @@ export function ConnectionsPanel({
               type="button"
               disabled={busy !== null}
               className="self-start rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium hover:bg-accent disabled:opacity-50"
-              onClick={() => void disconnect("meta")}
+              onClick={() => disconnect("meta")}
             >
               {busy === "meta" ? "Disconnecting…" : "Disconnect"}
             </button>
@@ -199,6 +210,7 @@ export function ConnectionsPanel({
         ) : (
           <a
             href="/api/oauth/meta/start"
+            onClick={() => stashOAuthMergeBase()}
             className="inline-flex rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
           >
             Connect Facebook &amp; Instagram
