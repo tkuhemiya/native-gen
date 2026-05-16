@@ -9,6 +9,7 @@ const CSRF_COOKIE = "ng_csrf_oauth_meta";
 const SCOPES = [
   "pages_show_list",
   "pages_read_engagement",
+  "pages_manage_posts",
   "business_management",
   "instagram_basic",
   "instagram_content_publish",

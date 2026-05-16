@@ -1,8 +1,7 @@
 import type { NextRequest } from "next/server";
-import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { readSocialBlob, setSocialCookieOnResponse, SOCIAL_COOKIE } from "@/lib/oauth/cookies";
+import { commitSocialAccountsBlob, loadSocialAccountsBlob } from "@/lib/oauth/server-store";
 
 export async function POST(request: NextRequest) {
   const body = (await request.json().catch(() => null)) as {
@@ -13,8 +12,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "invalid_provider" }, { status: 400 });
   }
 
-  const jar = await cookies();
-  const blob = readSocialBlob(jar.get(SOCIAL_COOKIE)?.value);
+  const blob = await loadSocialAccountsBlob();
   const next = { ...blob };
   if (provider === "google") {
     delete next.google;
@@ -23,6 +21,6 @@ export async function POST(request: NextRequest) {
   }
 
   const res = NextResponse.json({ ok: true });
-  setSocialCookieOnResponse(res, next);
+  await commitSocialAccountsBlob(res, next);
   return res;
 }

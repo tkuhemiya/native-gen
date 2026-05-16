@@ -1,6 +1,4 @@
-import { cookies } from "next/headers";
-
-import { readSocialBlob, SOCIAL_COOKIE } from "@/lib/oauth/cookies";
+import { loadSocialAccountsBlob } from "@/lib/oauth/server-store";
 import { socialBlobToPublicStatus } from "@/lib/oauth/public-status";
 
 import { ConnectionsPanel } from "../connections-panel";
@@ -11,8 +9,8 @@ export default async function ConnectionsPage({
   searchParams: Promise<{ error?: string; connected?: string }>;
 }) {
   const sp = await searchParams;
-  const jar = await cookies();
-  const initial = socialBlobToPublicStatus(readSocialBlob(jar.get(SOCIAL_COOKIE)?.value));
+  const blob = await loadSocialAccountsBlob();
+  const initial = socialBlobToPublicStatus(blob);
 
   const error = sp.error ?? "";
   const connected = sp.connected ?? "";

@@ -91,8 +91,13 @@ export function ConnectionsPanel({
       <div>
         <h1 className="text-xl font-semibold tracking-tight text-foreground">Social accounts</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Connect publishing destinations. Tokens stay in an encrypted cookie on this browser (demo-style
-          storage — use a proper database for production).
+          Connect publishing destinations. By default tokens live in an encrypted cookie on this browser
+          (demo-style). Set <code className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]">NATIVE_GEN_OAUTH_PERSIST_PATH</code>{" "}
+          to a writable JSON file path for server-side persistence (better for self-hosted demos).
+        </p>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Live demo checklist: rehearse on venue Wi‑Fi, keep a short screen recording of Publish working as backup,
+          and reconnect Meta if we added posting scopes.
         </p>
       </div>
 
@@ -155,7 +160,8 @@ export function ConnectionsPanel({
         </h2>
         <p className="text-xs text-muted-foreground">
           One Meta login covers Facebook Pages and Instagram Business/Creator accounts linked to those Pages.
-          Publishing permissions may require Meta app review outside developer test users.
+          Publishing uses Page posting permissions — reconnect here if a newer build added scopes.
+          Full production may require Meta app review outside developer test users.
         </p>
         {data.meta.connected ? (
           <div className="flex flex-col gap-3 text-sm">

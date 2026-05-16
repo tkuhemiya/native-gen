@@ -20,7 +20,7 @@ import { saveAs } from "file-saver";
 import JSZip from "jszip";
 import { useTheme } from "next-themes";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 
 import { ThemeToggle } from "@/components/theme-toggle";
 import { FlowContextMenuPortal } from "@/components/workflow/FlowContextMenu";
@@ -89,6 +89,58 @@ export function WorkflowEditor() {
   const [library, setLibrary] = useState<WorkflowDocument[]>([]);
   const [status, setStatus] = useState<string | null>(null);
   const [lastOutputs, setLastOutputs] = useState<RuntimeOutputs | null>(null);
+
+  const metaPublishCandidates = useMemo(() => {
+    if (!lastOutputs) return [] as AppNode[];
+    return nodes.filter((n) => {
+      if (n.data.kind !== "platformExport") return false;
+      if (n.data.platform !== "facebook" && n.data.platform !== "instagram") return false;
+      if (!n.data.metaPageId?.trim()) return false;
+      const o = lastOutputs[n.id];
+      return o?.type === "bundle" && o.publish != null;
+    });
+  }, [nodes, lastOutputs]);
+
+  const canPublishMeta = metaPublishCandidates.length > 0;
+
+  const [metaPublishTargetId, setMetaPublishTargetId] = useState<string | null>(null);
+  useEffect(() => {
+    if (metaPublishCandidates.length === 0) {
+      setMetaPublishTargetId(null);
+      return;
+    }
+    setMetaPublishTargetId((prev) =>
+      prev && metaPublishCandidates.some((c) => c.id === prev)
+        ? prev
+        : metaPublishCandidates[0]!.id,
+    );
+  }, [metaPublishCandidates]);
+
+  const youtubePublishCandidates = useMemo(() => {
+    if (!lastOutputs) return [] as AppNode[];
+    return nodes.filter((n) => {
+      if (n.data.kind !== "platformExport") return false;
+      if (n.data.platform !== "youtube") return false;
+      const o = lastOutputs[n.id];
+      return o?.type === "bundle" && o.publishYoutube != null;
+    });
+  }, [nodes, lastOutputs]);
+
+  const canPublishYoutube = youtubePublishCandidates.length > 0;
+
+  const [youtubePublishTargetId, setYoutubePublishTargetId] = useState<string | null>(null);
+  useEffect(() => {
+    if (youtubePublishCandidates.length === 0) {
+      setYoutubePublishTargetId(null);
+      return;
+    }
+    setYoutubePublishTargetId((prev) =>
+      prev && youtubePublishCandidates.some((c) => c.id === prev)
+        ? prev
+        : youtubePublishCandidates[0]!.id,
+    );
+  }, [youtubePublishCandidates]);
+
   const [suggestBrief, setSuggestBrief] = useState("");
   const importRef = useRef<HTMLInputElement>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
@@ -539,6 +591,112 @@ export function WorkflowEditor() {
     setStatus("ZIP downloaded");
   };
 
+  const publishMeta = async () => {
+    if (!lastOutputs) {
+      setStatus("Run the workflow first.");
+      return;
+    }
+    const exportNode = metaPublishTargetId
+      ? nodes.find((n) => n.id === metaPublishTargetId)
+      : undefined;
+    const resolved =
+      exportNode &&
+      exportNode.data.kind === "platformExport" &&
+      (exportNode.data.platform === "facebook" || exportNode.data.platform === "instagram")
+        ? exportNode
+        : metaPublishCandidates[0];
+
+    if (!resolved || resolved.data.kind !== "platformExport") {
+      setStatus("Select Facebook or Instagram, choose a Page on the export node, then run.");
+      return;
+    }
+    const out = lastOutputs[resolved.id];
+    if (out?.type !== "bundle" || !out.publish) {
+      setStatus("Nothing to publish — run the workflow again.");
+      return;
+    }
+    setStatus("Publishing…");
+    try {
+      const res = await fetch("/api/publish/meta", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          destination: resolved.data.platform,
+          pageId: resolved.data.metaPageId!,
+          imageUrls: out.publish.imageUrls,
+          caption: out.publish.caption,
+        }),
+      });
+      const body = (await res.json()) as {
+        error?: string;
+        permalink?: string | null;
+        ok?: boolean;
+        carousel?: boolean;
+        reqId?: string;
+      };
+      if (!res.ok) {
+        setStatus(body.error ?? "Publish failed.");
+        return;
+      }
+      const link = body.permalink ? ` ${body.permalink}` : "";
+      const carouselNote = body.carousel ? " (carousel)" : "";
+      setStatus(`Published to ${resolved.data.platform}${carouselNote}.${link}`);
+    } catch {
+      setStatus("Publish request failed.");
+    }
+  };
+
+  const publishYoutube = async () => {
+    if (!lastOutputs) {
+      setStatus("Run the workflow first.");
+      return;
+    }
+    const exportNode = youtubePublishTargetId
+      ? nodes.find((n) => n.id === youtubePublishTargetId)
+      : undefined;
+    const resolved =
+      exportNode &&
+      exportNode.data.kind === "platformExport" &&
+      exportNode.data.platform === "youtube"
+        ? exportNode
+        : youtubePublishCandidates[0];
+
+    if (!resolved || resolved.data.kind !== "platformExport") {
+      setStatus("Set platform to YouTube, wire a public https video URL, then run.");
+      return;
+    }
+    const out = lastOutputs[resolved.id];
+    if (out?.type !== "bundle" || !out.publishYoutube) {
+      setStatus("Nothing to upload — run workflow with a remote https video on the video handle.");
+      return;
+    }
+    const { videoUrl, title, description } = out.publishYoutube;
+    setStatus("Uploading to YouTube…");
+    try {
+      const res = await fetch("/api/publish/youtube", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          videoUrl,
+          title,
+          description,
+        }),
+      });
+      const body = (await res.json()) as {
+        error?: string;
+        watchUrl?: string;
+        ok?: boolean;
+      };
+      if (!res.ok) {
+        setStatus(body.error ?? "YouTube upload failed.");
+        return;
+      }
+      setStatus(body.watchUrl ? `YouTube: ${body.watchUrl}` : "Uploaded to YouTube.");
+    } catch {
+      setStatus("YouTube upload request failed.");
+    }
+  };
+
   return (
     <>
     <div className="flex h-[100dvh] flex-col bg-background text-foreground">
@@ -604,6 +762,60 @@ export function WorkflowEditor() {
             onClick={() => void downloadZip()}
           >
             Download ZIP
+          </button>
+          {metaPublishCandidates.length > 1 ? (
+            <select
+              className="max-w-[160px] rounded-md border border-border bg-card px-2 py-1 text-[10px] text-card-foreground"
+              value={metaPublishTargetId ?? ""}
+              onChange={(e) => setMetaPublishTargetId(e.target.value || null)}
+              title="Which Platform export node to post from"
+            >
+              {metaPublishCandidates.map((n) => (
+                <option key={n.id} value={n.id}>
+                  {n.data.kind === "platformExport" ? n.data.label : n.id}
+                </option>
+              ))}
+            </select>
+          ) : null}
+          <button
+            type="button"
+            disabled={!canPublishMeta}
+            title={
+              canPublishMeta
+                ? "Post images to the selected Page or Instagram (2+ https images = IG carousel)"
+                : "Run with Facebook/Instagram export, select a Page, and use https image URLs (e.g. Flux)."
+            }
+            className="rounded-md border border-border bg-card px-3 py-1 text-xs font-medium text-card-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={() => void publishMeta()}
+          >
+            Publish to Meta
+          </button>
+          {youtubePublishCandidates.length > 1 ? (
+            <select
+              className="max-w-[160px] rounded-md border border-border bg-card px-2 py-1 text-[10px] text-card-foreground"
+              value={youtubePublishTargetId ?? ""}
+              onChange={(e) => setYoutubePublishTargetId(e.target.value || null)}
+              title="Which YouTube export node to upload from"
+            >
+              {youtubePublishCandidates.map((n) => (
+                <option key={n.id} value={n.id}>
+                  {n.data.kind === "platformExport" ? n.data.label : n.id}
+                </option>
+              ))}
+            </select>
+          ) : null}
+          <button
+            type="button"
+            disabled={!canPublishYoutube}
+            title={
+              canPublishYoutube
+                ? "Upload the wired https video to your connected YouTube channel (demo size limits apply)."
+                : "YouTube: wire the bottom (video) handle to a remote https MP4, connect YouTube, then run."
+            }
+            className="rounded-md border border-border bg-card px-3 py-1 text-xs font-medium text-card-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={() => void publishYoutube()}
+          >
+            Publish to YouTube
           </button>
           <Link
             href="/settings/connections"

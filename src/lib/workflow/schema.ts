@@ -39,6 +39,8 @@ export const nodeDataSchema = z.discriminatedUnion("kind", [
     kind: z.literal("platformExport"),
     label: z.string(),
     platform: z.enum(["youtube", "facebook", "instagram", "tiktok"]),
+    /** Facebook Page ID for Meta publish (Facebook or Instagram). */
+    metaPageId: z.string().optional(),
   }),
 ]);
 

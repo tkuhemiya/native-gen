@@ -16,7 +16,20 @@ export type RuntimeOutputs = Record<
       imageUrls: string[];
       videoUrls: string[];
     }
-  | { type: "bundle"; files: { path: string; blob: Blob }[] }
+  | {
+      type: "bundle";
+      files: { path: string; blob: Blob }[];
+      publish?: {
+        platform: "facebook" | "instagram";
+        imageUrls: string[];
+        caption: string;
+      };
+      publishYoutube?: {
+        videoUrl: string;
+        title: string;
+        description: string;
+      };
+    }
 >;
 
 export type RunProgress = {
@@ -56,19 +69,53 @@ function collectUpstreamText(
   return parts.join("\n").trim();
 }
 
-function collectUpstreamImageUrl(
+function isVideoTargetEdge(edge: WorkflowEdge, nodeId: string) {
+  return edge.target === nodeId && edge.targetHandle === "video";
+}
+
+function collectUpstreamImageUrls(
+  nodeId: string,
+  incomingByTarget: Map<string, WorkflowEdge[]>,
+  outputs: RuntimeOutputs,
+): string[] {
+  const incoming = incomingByTarget.get(nodeId) ?? [];
+  const urls: string[] = [];
+  const seen = new Set<string>();
+  for (const edge of incoming) {
+    if (!isImageTargetEdge(edge, nodeId)) continue;
+    const upstream = outputs[edge.source];
+    if (!upstream) continue;
+    if (upstream.type === "image" && upstream.url) {
+      if (!seen.has(upstream.url)) {
+        urls.push(upstream.url);
+        seen.add(upstream.url);
+      }
+    }
+    if (upstream.type === "mediaInput") {
+      for (const u of upstream.imageUrls) {
+        if (u && !seen.has(u)) {
+          urls.push(u);
+          seen.add(u);
+        }
+      }
+    }
+  }
+  return urls;
+}
+
+function collectUpstreamVideoUrl(
   nodeId: string,
   incomingByTarget: Map<string, WorkflowEdge[]>,
   outputs: RuntimeOutputs,
 ): string | undefined {
   const incoming = incomingByTarget.get(nodeId) ?? [];
   for (const edge of incoming) {
-    if (!isImageTargetEdge(edge, nodeId)) continue;
+    if (!isVideoTargetEdge(edge, nodeId)) continue;
     const upstream = outputs[edge.source];
     if (!upstream) continue;
-    if (upstream.type === "image") return upstream.url;
-    if (upstream.type === "mediaInput" && upstream.imageUrls[0]) {
-      return upstream.imageUrls[0];
+    if (upstream.type === "video") return upstream.url;
+    if (upstream.type === "mediaInput" && upstream.videoUrls[0]) {
+      return upstream.videoUrls[0];
     }
   }
   return undefined;
@@ -143,14 +190,74 @@ export async function runWorkflowDAG(
         break;
       }
       case "platformExport": {
-        const imageUrl = collectUpstreamImageUrl(id, incomingByTarget, outputs);
+        const imageUrlsAll = collectUpstreamImageUrls(id, incomingByTarget, outputs);
+        const videoUrl = collectUpstreamVideoUrl(id, incomingByTarget, outputs);
         const copy = collectUpstreamText(id, incomingByTarget, outputs);
-        if (!imageUrl) {
+        const caption = [copy.trim(), data.label].filter(Boolean).join("\n\n").slice(0, 2200);
+        const description = [copy.trim(), data.label].filter(Boolean).join("\n\n").slice(0, 5000);
+
+        if (data.platform === "youtube") {
+          if (imageUrlsAll.length === 0 && !videoUrl) {
+            throw new GraphError(
+              "YouTube export needs an upstream image and/or video (wire the video handle for MP4 uploads).",
+            );
+          }
+          const files: { path: string; blob: Blob }[] = [];
+          if (imageUrlsAll[0]) {
+            const imgRes = await fetch(imageUrlsAll[0]);
+            if (!imgRes.ok) throw new GraphError("Failed to download image for export");
+            files.push({
+              path: `platforms/youtube/creative.png`,
+              blob: await imgRes.blob(),
+            });
+          }
+          if (videoUrl) {
+            const vr = await fetch(videoUrl);
+            if (!vr.ok) throw new GraphError("Failed to download video for export");
+            files.push({
+              path: `platforms/youtube/creative.mp4`,
+              blob: await vr.blob(),
+            });
+          }
+          const manifest = {
+            platform: data.platform,
+            title: data.label,
+            copy,
+            generatedAt: new Date().toISOString(),
+            sourceImage: imageUrlsAll[0] ?? null,
+            sourceVideo: videoUrl ?? null,
+          };
+          files.push({
+            path: `platforms/youtube/manifest.json`,
+            blob: new Blob([JSON.stringify(manifest, null, 2)], {
+              type: "application/json",
+            }),
+          });
+          const httpsVideo =
+            videoUrl && /^https:\/\//i.test(videoUrl) ? videoUrl : undefined;
+          outputs[id] = {
+            type: "bundle",
+            files,
+            publishYoutube: httpsVideo
+              ? {
+                  videoUrl: httpsVideo,
+                  title: data.label,
+                  description,
+                }
+              : undefined,
+          };
+          break;
+        }
+
+        const httpsImages = imageUrlsAll.filter((u) => /^https:\/\//i.test(u));
+        if (httpsImages.length === 0) {
           throw new GraphError(
-            `Platform export (${data.platform}) requires an upstream image`,
+            `${data.platform} export needs at least one upstream image with a public https URL (e.g. Flux output).`,
           );
         }
-        const imgRes = await fetch(imageUrl);
+
+        const primary = httpsImages[0];
+        const imgRes = await fetch(primary);
         if (!imgRes.ok) throw new GraphError("Failed to download image for export");
         const blob = await imgRes.blob();
         const manifest = {
@@ -158,7 +265,8 @@ export async function runWorkflowDAG(
           title: data.label,
           copy,
           generatedAt: new Date().toISOString(),
-          sourceImage: imageUrl,
+          sourceImage: primary,
+          sourceImages: httpsImages,
         };
         const files: { path: string; blob: Blob }[] = [
           {
@@ -172,7 +280,18 @@ export async function runWorkflowDAG(
             }),
           },
         ];
-        outputs[id] = { type: "bundle", files };
+        outputs[id] = {
+          type: "bundle",
+          files,
+          publish:
+            data.platform === "facebook" || data.platform === "instagram"
+              ? {
+                  platform: data.platform,
+                  imageUrls: httpsImages.slice(0, 10),
+                  caption,
+                }
+              : undefined,
+        };
         break;
       }
       default: {

@@ -6,7 +6,7 @@ import type { CanvasNodeType } from "@/lib/workflow/schema";
 export const NODE_ANCHOR: Record<CanvasNodeType, { w: number; h: number }> = {
   mediaInput: { w: 280, h: 312 },
   falFluxSchnell: { w: 300, h: 210 },
-  platformExport: { w: 260, h: 150 },
+  platformExport: { w: 260, h: 320 },
 };
 
 export function topLeftForCenteredNode(

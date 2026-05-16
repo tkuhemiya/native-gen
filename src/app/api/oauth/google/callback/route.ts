@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 import { oauthPublicBaseUrl } from "@/lib/oauth/base-url";
-import { readSocialBlob, setSocialCookieOnResponse, SOCIAL_COOKIE } from "@/lib/oauth/cookies";
+import { loadSocialAccountsBlob, commitSocialAccountsBlob } from "@/lib/oauth/server-store";
 import { sealPayload } from "@/lib/oauth/crypto";
 import type { SocialAccountsBlob } from "@/lib/oauth/types";
 
@@ -94,7 +94,7 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  const existing = readSocialBlob(jar.get(SOCIAL_COOKIE)?.value);
+  const existing = await loadSocialAccountsBlob();
   const next: SocialAccountsBlob = {
     ...existing,
     google: {
@@ -108,6 +108,6 @@ export async function GET(request: NextRequest) {
 
   const res = NextResponse.redirect(`${base}/settings/connections?connected=google`);
   res.cookies.set(CSRF_COOKIE, "", { httpOnly: true, path: "/", maxAge: 0 });
-  setSocialCookieOnResponse(res, next);
+  await commitSocialAccountsBlob(res, next);
   return res;
 }
