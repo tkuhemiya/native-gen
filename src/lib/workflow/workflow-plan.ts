@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { assertConnectedDAG, GraphError } from "./graph";
 import { incomingMediaLanes, outgoingMediaLanes, planGeneration } from "./generation-plan";
+import { layoutWorkflowNodesCompactDAG } from "./node-layout";
 import {
   WORKFLOW_DOCUMENT_VERSION,
   defaultNodeData,
@@ -356,12 +357,30 @@ function collectEdgeSpecs(plan: WorkflowPlan): EdgeSpec[] {
   const key = (e: EdgeSpec) =>
     `${e.fromStageId}|${e.toStageId}|${e.sourceHandle}|${e.targetHandle}`;
   const seen = new Set<string>();
-  return specs.filter((e) => {
+  const deduped = specs.filter((e) => {
     const k = key(e);
     if (seen.has(k)) return false;
     seen.add(k);
     return true;
   });
+
+  const genStageIds = new Set<string>();
+  for (const st of stages) {
+    if (st.kind === "generation") genStageIds.add(st.id);
+  }
+  const genWithOutbound = new Set<string>();
+  for (const e of deduped) {
+    if (genStageIds.has(e.fromStageId)) genWithOutbound.add(e.fromStageId);
+  }
+  for (const id of genStageIds) {
+    if (!genWithOutbound.has(id)) {
+      throw new GraphError(
+        `Generation stage "${id}" has no outgoing wires. Connect it to platformExport (imageFromStageId / moreImageFromStageIds / videoFromStageId — and put "image" or "video" in outputs as needed) or wire its output into another generation stage's inputs.`,
+      );
+    }
+  }
+
+  return deduped;
 }
 
 export function buildIncomingByTarget(edges: WorkflowEdge[]): Map<string, WorkflowEdge[]> {
@@ -390,7 +409,7 @@ export function compileWorkflowPlanToDocument(
       stageIdToNodeId.set(st.id, crypto.randomUUID());
     }
 
-    const nodes: WorkflowNode[] = plan.stages.map((st, index) => {
+    let nodes: WorkflowNode[] = plan.stages.map((st, index) => {
       const id = stageIdToNodeId.get(st.id)!;
       const position = { x: index * 340, y: 0 };
 
@@ -448,6 +467,8 @@ export function compileWorkflowPlanToDocument(
     }));
 
     assertConnectedDAG(nodes, edges);
+
+    nodes = layoutWorkflowNodesCompactDAG(nodes, edges);
 
     const incomingByTarget = buildIncomingByTarget(edges);
 

@@ -9,6 +9,7 @@ type AgentResponse = {
   source?: "openai" | "template";
   note?: string;
   error?: string;
+  validationIssues?: string[];
   /** Ordered planner actions (tool runs, retries) for the chat UI */
   agentLog?: string[];
 };
@@ -26,9 +27,15 @@ function cid() {
 type WorkflowAgentPanelProps = {
   onApplyDocument: (doc: WorkflowDocument) => void | Promise<void>;
   onStatus: (message: string | null) => void;
+  /** Serializes the live React Flow canvas for read/edit tool rounds (omit invalid graphs). */
+  getCanvasSnapshot: () => WorkflowDocument | null;
 };
 
-export function WorkflowAgentPanel({ onApplyDocument, onStatus }: WorkflowAgentPanelProps) {
+export function WorkflowAgentPanel({
+  onApplyDocument,
+  onStatus,
+  getCanvasSnapshot,
+}: WorkflowAgentPanelProps) {
   const [messages, setMessages] = useState<ChatTurn[]>([]);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -58,21 +65,32 @@ export function WorkflowAgentPanel({ onApplyDocument, onStatus }: WorkflowAgentP
     onStatus("Contacting the workflow agent…");
 
     const apiPayload = [...priorForApi, { role: "user" as const, content: text }];
+    const workflow = getCanvasSnapshot();
 
     try {
       const res = await fetch("/api/workflow/agent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: apiPayload }),
+        body: JSON.stringify({
+          messages: apiPayload,
+          ...(workflow ? { workflow } : {}),
+        }),
       });
       const body = (await res.json()) as AgentResponse;
       if (!res.ok) {
         const msg = body.error ?? "Agent request failed";
+        const issues =
+          body.validationIssues?.filter(Boolean).map((line) => `• ${line}`).join("\n") ?? "";
         onStatus(msg);
         setMessages((m) => [
           ...m,
-          { id: cid(), role: "assistant", content: `Could not update the workflow: ${msg}` },
+          {
+            id: cid(),
+            role: "assistant",
+            content: issues ? `Could not update the workflow: ${msg}\n\n${issues}` : `Could not update the workflow: ${msg}`,
+          },
         ]);
+        if (body.agentLog?.length) setLastAgentLog(body.agentLog);
         return;
       }
       if (body.agentLog?.length) {
@@ -125,7 +143,7 @@ export function WorkflowAgentPanel({ onApplyDocument, onStatus }: WorkflowAgentP
     } finally {
       setBusy(false);
     }
-  }, [draft, messages, onApplyDocument, onStatus]);
+  }, [draft, getCanvasSnapshot, messages, onApplyDocument, onStatus]);
 
   const onComposerKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {

@@ -301,6 +301,19 @@ export function WorkflowEditor() {
     await refreshLibrary();
   }, [workflowId, workflowName, nodes, edges, refreshLibrary]);
 
+  const getAgentCanvasSnapshot = useCallback((): WorkflowDocument | null => {
+    const doc = {
+      id: workflowId,
+      name: workflowName.trim() || "Untitled campaign",
+      version: WORKFLOW_DOCUMENT_VERSION,
+      nodes: rfNodesToWorkflow(nodes),
+      edges: rfEdgesToWorkflow(edges),
+      updatedAt: new Date().toISOString(),
+    };
+    const parsed = workflowDocumentSchema.safeParse(doc);
+    return parsed.success ? parsed.data : null;
+  }, [workflowId, workflowName, nodes, edges]);
+
   useEffect(() => {
     if (!storageHydrated) return;
     const handle = window.setTimeout(() => {
@@ -929,6 +942,7 @@ export function WorkflowEditor() {
 
       <div className="flex flex-1 overflow-hidden">
         <WorkflowAgentPanel
+          getCanvasSnapshot={getAgentCanvasSnapshot}
           onApplyDocument={(doc) => applyWorkflowDocument(doc)}
           onStatus={setStatus}
         />

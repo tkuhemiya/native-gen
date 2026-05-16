@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { buildTemplateWorkflowDocument } from "@/lib/workflow/template-from-brief";
+import { workflowDocumentSchema } from "@/lib/workflow/schema";
+import type { WorkflowDocument } from "@/lib/workflow/schema";
 import {
   generateWorkflowWithOpenAI,
   workflowAgentLegacyUserContent,
@@ -17,6 +19,8 @@ const bodySchema = z
   .object({
     prompt: z.string().min(1).max(6000).optional(),
     messages: z.array(messageSchema).min(1).max(30).optional(),
+    /** Current canvas so the agent can read/edit incrementally (full WorkflowDocument v3). */
+    workflow: z.unknown().optional(),
   })
   .superRefine((data, ctx) => {
     const hasPrompt = Boolean(data.prompt?.trim());
@@ -73,12 +77,19 @@ export async function POST(req: Request) {
 
   const { dialog, templateBrief } = normalizedDialogAndBrief(parsed.data);
 
+  let canvasSnapshot: WorkflowDocument | null = null;
+  const rawWorkflow = parsed.data.workflow;
+  if (rawWorkflow !== undefined) {
+    const checked = workflowDocumentSchema.safeParse(rawWorkflow);
+    if (checked.success) canvasSnapshot = checked.data;
+  }
+
   const hasOpenAI = Boolean(process.env.OPENAI_API_KEY?.trim());
 
   if (hasOpenAI) {
     let plannerAgentLog: string[] | undefined;
     try {
-      const result = await generateWorkflowWithOpenAI(dialog);
+      const result = await generateWorkflowWithOpenAI(dialog, { canvasSnapshot });
       plannerAgentLog = result.agentLog;
       if (result.workflow) {
         return NextResponse.json({
@@ -86,21 +97,24 @@ export async function POST(req: Request) {
           source: "openai" as const,
           ...(plannerAgentLog?.length && { agentLog: plannerAgentLog }),
           ...(result.validationRepaired && {
-            note: "Workflow produced after tool loop (lint/compile or retries).",
+            note: "Applied after the planner fixed validation details (you can ignore this).",
           }),
         });
       }
+      return NextResponse.json(
+        {
+          error:
+            result.validationError ??
+            "The model could not produce a workflow that passes validation on the server.",
+          ...(result.validationIssues?.length && { validationIssues: result.validationIssues }),
+          ...(plannerAgentLog?.length && { agentLog: plannerAgentLog }),
+        },
+        { status: 422 },
+      );
     } catch (e) {
       const message = e instanceof Error ? e.message : "OpenAI request failed";
       return NextResponse.json({ error: message }, { status: 502 });
     }
-    const fallback = buildTemplateWorkflowDocument(templateBrief);
-    return NextResponse.json({
-      workflow: fallback,
-      source: "template" as const,
-      note: "Model output did not validate; applied keyword template instead.",
-      ...(plannerAgentLog?.length && { agentLog: plannerAgentLog }),
-    });
   }
 
   const workflow = buildTemplateWorkflowDocument(templateBrief);
