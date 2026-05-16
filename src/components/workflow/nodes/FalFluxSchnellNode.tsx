@@ -63,7 +63,7 @@ export function FalFluxSchnellNode(props: NodeProps<AppNode>) {
             onChange={(e) =>
               updateNodeData(id, {
                 ...data,
-                numInferenceSteps: Number(e.target.value) || 4,
+                numInferenceSteps: Number(e.target.value) || 2,
               })
             }
           />

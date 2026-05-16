@@ -2,15 +2,26 @@ import { fal } from "@fal-ai/client";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import {
+  assertSafeFalEndpointId,
+  buildFluxSchnellQueueInput,
+  extractFalImagesUrl,
+  getFalTextToImageEndpointId,
+  getFalTextToImageQueuePriority,
+} from "@/lib/fal/text-to-image-config";
+
 const bodySchema = z.object({
   prompt: z.string().min(1).max(2000),
   imageSize: z
     .enum(["square_hd", "landscape_4_3", "portrait_4_3"])
     .default("landscape_4_3"),
-  numInferenceSteps: z.number().min(1).max(12).default(4),
+  numInferenceSteps: z.number().min(1).max(12).default(2),
 });
 
-/** Fal `flux/schnell` — fast, budget-friendly generations for demos. */
+/**
+ * Text → image via fal (workflow Flux node). Payload targets FLUX Schnell–compatible schemas;
+ * defaults to **`fal-ai/flux/schnell`** (~$0.003/MP — check fal.ai for current tiers).
+ */
 export async function POST(req: Request) {
   if (!process.env.FAL_KEY) {
     return NextResponse.json(
@@ -27,21 +38,31 @@ export async function POST(req: Request) {
 
   const { prompt, imageSize, numInferenceSteps } = parsed.data;
 
+  let endpointId: string;
+  try {
+    endpointId = getFalTextToImageEndpointId();
+    assertSafeFalEndpointId(endpointId);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Invalid FAL_TEXT_TO_IMAGE_MODEL";
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+
   try {
     fal.config({ credentials: process.env.FAL_KEY });
-    const result = await fal.subscribe("fal-ai/flux/schnell", {
-      input: {
-        prompt,
-        image_size: imageSize,
-        num_inference_steps: numInferenceSteps,
-        num_images: 1,
-        enable_safety_checker: true,
-      },
-      logs: true,
+
+    const input = buildFluxSchnellQueueInput({
+      prompt,
+      imageSize,
+      numInferenceSteps,
     });
 
-    const images = (result.data as { images?: { url: string }[] }).images;
-    const url = images?.[0]?.url;
+    const result = await fal.subscribe(endpointId, {
+      input,
+      logs: true,
+      priority: getFalTextToImageQueuePriority(),
+    });
+
+    const url = extractFalImagesUrl(result.data);
     if (!url) {
       return NextResponse.json({ error: "Fal did not return an image URL" }, { status: 502 });
     }
