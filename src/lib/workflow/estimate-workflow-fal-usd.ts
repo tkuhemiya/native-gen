@@ -73,6 +73,14 @@ export function estimateWorkflowFalUsd(doc: WorkflowDocument): EstimateWorkflowF
         detail: "fal-ai/florence-2-large/caption (listed $0/compute-s on fal)",
       });
     }
+    if (plan.needReferenceProductCaption) {
+      calls.push({
+        intent: "reference-product-caption",
+        usd: FAL_FLORENCE_CAPTION_ESTIMATE_USD,
+        detail:
+          "fal-ai/florence-2-large/caption — analyzes reference still before Flux",
+      });
+    }
     if (plan.needTextToImage) {
       const usd = falFluxSchnellImageUsd(node.data.imageSize);
       calls.push({

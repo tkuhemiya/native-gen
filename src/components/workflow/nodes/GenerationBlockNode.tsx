@@ -132,8 +132,11 @@ export function GenerationBlockNode(props: NodeProps<AppNode>) {
             <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               Generate
             </span>
-            <span className="text-[9px] text-muted-foreground">
-              Flux · image / caption
+            <span
+              className="text-[9px] text-muted-foreground"
+              title="Blue in: reference product still (optional). Green out: promo copy + hashtags when both green and blue outs are wired."
+            >
+              Flux · poster + social text
             </span>
           </div>
           {!edgesOut.none && edgesOut.hasTextOut && !edgesOut.hasImageOut ? (

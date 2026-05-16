@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getFalImageCaptionEndpointId } from "@/lib/fal/generation-models";
+import { resolveImageUrlForFal } from "@/lib/fal/resolve-image-url";
 import {
   assertSafeFalEndpointId,
   buildFluxSchnellQueueInput,
@@ -21,7 +22,8 @@ const bodySchema = z.discriminatedUnion("intent", [
   }),
   z.object({
     intent: z.literal("image-to-text"),
-    imageUrl: z.string().min(10).max(500_000),
+    /** https URL or data:image base64 (large refs uploaded to fal storage server-side). */
+    imageUrl: z.string().min(10).max(25 * 1024 * 1024),
   }),
 ]);
 
@@ -113,8 +115,9 @@ export async function POST(req: Request) {
       case "image-to-text": {
         const endpointId = getFalImageCaptionEndpointId();
         assertSafeFalEndpointId(endpointId);
+        const hostedUrl = await resolveImageUrlForFal(payload.imageUrl);
         const result = await fal.subscribe(endpointId, {
-          input: { image_url: payload.imageUrl },
+          input: { image_url: hostedUrl },
           logs: true,
           priority,
         });

@@ -62,7 +62,9 @@ function generationPlanToIntents(plan: GenerationPlan): string[] {
   const intents: string[] = [];
   if (plan.needPassthroughText) intents.push("passthrough-text");
   if (plan.needCaption) intents.push("image-to-text");
+  if (plan.needReferenceProductCaption) intents.push("reference-product-caption");
   if (plan.needTextToImage) intents.push("text-to-image");
+  if (plan.needMarketingSocialCopy) intents.push("marketing-social-copy");
   return intents;
 }
 
@@ -118,7 +120,9 @@ function relativeUnitsForGeneration(plan: GenerationPlan): number {
   let u = 0;
   if (plan.needPassthroughText) u += 0;
   if (plan.needCaption) u += 2;
+  if (plan.needReferenceProductCaption) u += 2;
   if (plan.needTextToImage) u += 5;
+  if (plan.needMarketingSocialCopy) u += 1;
   return u;
 }
 

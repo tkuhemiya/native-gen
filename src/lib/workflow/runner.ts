@@ -202,6 +202,7 @@ function generationCacheSatisfiesPlan(
 ): boolean {
   if (plan.needPassthroughText && !cached.text?.trim()) return false;
   if (plan.needCaption && !cached.text?.trim()) return false;
+  if (plan.needMarketingSocialCopy && !cached.text?.trim()) return false;
   if (plan.needTextToImage && !cached.imageUrl) return false;
   return true;
 }
@@ -321,6 +322,38 @@ export async function runWorkflowDAG(
           data.suffix.trim() ||
           "Sharp detail, advertising polish, brand-safe composition";
 
+        async function postSocialMarketingCopy(body: {
+          campaignBrief: string;
+          productDescription?: string;
+          sceneBrief?: string;
+        }) {
+          const res = await fetch("/api/workflow/social-copy", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          const rawText = await res.text();
+          let parsedBody: Record<string, unknown> = {};
+          try {
+            const p = JSON.parse(rawText) as unknown;
+            if (p && typeof p === "object" && !Array.isArray(p)) {
+              parsedBody = p as Record<string, unknown>;
+            }
+          } catch {
+            /* non-JSON */
+          }
+          if (!res.ok) {
+            const msg =
+              typeof parsedBody.error === "string"
+                ? parsedBody.error.trim()
+                : `Social copy failed (${res.status})`;
+            throw new GraphError(msg);
+          }
+          const text = typeof parsedBody.text === "string" ? parsedBody.text.trim() : "";
+          if (!text) throw new GraphError("Social copy returned empty text");
+          return text;
+        }
+
         async function postGeneration(body: Record<string, unknown>) {
           const intent =
             typeof body.intent === "string" ? body.intent : "unknown";
@@ -369,6 +402,7 @@ export async function runWorkflowDAG(
 
         let textOut: string | undefined;
         let imageUrlOut: string | undefined;
+        let productAnchor: string | undefined;
 
         if (plan.needPassthroughText) {
           if (!promptNotes) {
@@ -393,10 +427,38 @@ export async function runWorkflowDAG(
           textOut = [caption, promptNotes].filter(Boolean).join("\n\n");
         }
 
+        if (plan.needReferenceProductCaption) {
+          const refImgs = collectUpstreamImageUrls(id, incomingByTarget, outputs);
+          const refUrl = refImgs[0];
+          if (!refUrl) {
+            throw new GraphError(
+              "Wire the product/reference still into the blue image pin so Flux can stay faithful to the SKU.",
+            );
+          }
+          const cap = await postGeneration({
+            intent: "image-to-text",
+            imageUrl: refUrl,
+          });
+          const caption =
+            typeof cap.text === "string" ? cap.text.trim() : "";
+          if (!caption) {
+            throw new GraphError("Reference image caption returned empty text");
+          }
+          productAnchor = caption;
+        }
+
+        let fluxPrompt = diffusionPrompt;
+        if (productAnchor?.trim()) {
+          fluxPrompt = `[Reference product — match accurately (packaging shape, visible label text, palette, logo):\n${productAnchor.trim()}\n]\n\nMarketing poster still: premium ad composition with clean negative space for headline overlays. Keep the SAME product identity as the reference; never swap in conflicting branding or labels.\n\nCreative brief:\n${diffusionPrompt}`;
+        } else if (plan.needTextToImage) {
+          fluxPrompt = `${diffusionPrompt}\n\nMarketing poster still, campaign-ready composition.`;
+        }
+        fluxPrompt = fluxPrompt.trim().slice(0, 4000);
+
         if (plan.needTextToImage) {
           const body = await postGeneration({
             intent: "text-to-image",
-            prompt: diffusionPrompt.slice(0, 4000),
+            prompt: fluxPrompt,
             imageSize: data.imageSize,
             numInferenceSteps: data.numInferenceSteps,
           });
@@ -406,6 +468,18 @@ export async function runWorkflowDAG(
               : undefined;
           if (!url) throw new GraphError("Image generation missing URL");
           imageUrlOut = url;
+        }
+
+        if (plan.needMarketingSocialCopy) {
+          const campaignBrief =
+            [promptNotes, data.suffix.trim()].filter(Boolean).join("\n\n").trim() ||
+            data.suffix.trim() ||
+            diffusionPrompt;
+          textOut = await postSocialMarketingCopy({
+            campaignBrief,
+            productDescription: productAnchor?.trim(),
+            sceneBrief: diffusionPrompt.slice(0, 2500),
+          });
         }
 
         outputs[id] = {
