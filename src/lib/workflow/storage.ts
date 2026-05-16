@@ -1,4 +1,5 @@
 import { openDB, type DBSchema, type IDBPDatabase } from "idb";
+import { normalizeWorkflowDocument } from "./migrate";
 import type { WorkflowDocument } from "./schema";
 
 interface NativeGenDB extends DBSchema {
@@ -33,13 +34,18 @@ export async function saveWorkflowDoc(doc: WorkflowDocument) {
 
 export async function loadWorkflowDoc(id: string) {
   const db = await getDb();
-  return db.get("workflows", id);
+  const row = await db.get("workflows", id);
+  if (!row) return undefined;
+  return normalizeWorkflowDocument(row) ?? undefined;
 }
 
 export async function listWorkflowDocs(): Promise<WorkflowDocument[]> {
   const db = await getDb();
   const all = await db.getAllFromIndex("workflows", "by-updated");
-  return all.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+  return all
+    .map((row) => normalizeWorkflowDocument(row))
+    .filter((doc): doc is WorkflowDocument => doc != null)
+    .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
 }
 
 export async function deleteWorkflowDoc(id: string) {

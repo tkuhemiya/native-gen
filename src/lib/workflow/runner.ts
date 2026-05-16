@@ -10,6 +10,12 @@ export type RuntimeOutputs = Record<
   | { type: "text"; value: string }
   | { type: "image"; url: string }
   | { type: "video"; url: string }
+  | {
+      type: "mediaInput";
+      text: string;
+      imageUrls: string[];
+      videoUrls: string[];
+    }
   | { type: "bundle"; files: { path: string; blob: Blob }[] }
 >;
 
@@ -23,18 +29,29 @@ type FalTextToImageResponse = {
   images?: { url: string }[];
 };
 
+function isTextTargetEdge(edge: WorkflowEdge, nodeId: string) {
+  return edge.target === nodeId && (edge.targetHandle == null || edge.targetHandle === "text");
+}
+
+function isImageTargetEdge(edge: WorkflowEdge, nodeId: string) {
+  return edge.target === nodeId && (edge.targetHandle == null || edge.targetHandle === "image");
+}
+
 function collectUpstreamText(
   nodeId: string,
-  nodesById: Map<string, WorkflowNode>,
   incomingByTarget: Map<string, WorkflowEdge[]>,
   outputs: RuntimeOutputs,
 ): string {
   const incoming = incomingByTarget.get(nodeId) ?? [];
   const parts: string[] = [];
   for (const edge of incoming) {
+    if (!isTextTargetEdge(edge, nodeId)) continue;
     const upstream = outputs[edge.source];
     if (!upstream) continue;
     if (upstream.type === "text") parts.push(upstream.value);
+    if (upstream.type === "mediaInput" && upstream.text.trim()) {
+      parts.push(upstream.text);
+    }
   }
   return parts.join("\n").trim();
 }
@@ -46,8 +63,13 @@ function collectUpstreamImageUrl(
 ): string | undefined {
   const incoming = incomingByTarget.get(nodeId) ?? [];
   for (const edge of incoming) {
+    if (!isImageTargetEdge(edge, nodeId)) continue;
     const upstream = outputs[edge.source];
-    if (upstream?.type === "image") return upstream.url;
+    if (!upstream) continue;
+    if (upstream.type === "image") return upstream.url;
+    if (upstream.type === "mediaInput" && upstream.imageUrls[0]) {
+      return upstream.imageUrls[0];
+    }
   }
   return undefined;
 }
@@ -83,28 +105,17 @@ export async function runWorkflowDAG(
     const data = node.data;
 
     switch (data.kind) {
-      case "textInput":
-        outputs[id] = { type: "text", value: data.value };
+      case "mediaInput":
+        outputs[id] = {
+          type: "mediaInput",
+          text: data.value,
+          imageUrls: data.images.map((a) => a.dataUrl),
+          videoUrls: data.videos.map((a) => a.dataUrl),
+        };
         break;
-      case "imageInput": {
-        const url = data.dataUrl;
-        if (!url) {
-          throw new GraphError(`Image input “${data.label}” is empty — upload a file`);
-        }
-        outputs[id] = { type: "image", url };
-        break;
-      }
-      case "videoInput": {
-        const url = data.dataUrl;
-        if (!url) {
-          throw new GraphError(`Video input “${data.label}” is empty — upload a file`);
-        }
-        outputs[id] = { type: "video", url };
-        break;
-      }
       case "falFluxSchnell": {
         const prompt =
-          collectUpstreamText(id, nodesById, incomingByTarget, outputs) + data.suffix;
+          collectUpstreamText(id, incomingByTarget, outputs) + data.suffix;
         if (!prompt.trim()) {
           throw new GraphError("Flux Schnell needs upstream text");
         }
@@ -120,7 +131,9 @@ export async function runWorkflowDAG(
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
           throw new GraphError(
-            typeof err?.error === "string" ? err.error : `Fal request failed (${res.status})`,
+            typeof err?.error === "string"
+              ? err.error
+              : `Fal request failed (${res.status})`,
           );
         }
         const body = (await res.json()) as FalTextToImageResponse;
@@ -131,7 +144,7 @@ export async function runWorkflowDAG(
       }
       case "platformExport": {
         const imageUrl = collectUpstreamImageUrl(id, incomingByTarget, outputs);
-        const copy = collectUpstreamText(id, nodesById, incomingByTarget, outputs);
+        const copy = collectUpstreamText(id, incomingByTarget, outputs);
         if (!imageUrl) {
           throw new GraphError(
             `Platform export (${data.platform}) requires an upstream image`,

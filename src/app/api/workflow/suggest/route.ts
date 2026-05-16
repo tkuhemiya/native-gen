@@ -26,11 +26,11 @@ export async function POST(req: Request) {
   const nodes = [
     {
       id: textId,
-      type: "textInput",
+      type: "mediaInput",
       position: { x: 0, y: 0 },
       data: {
-        kind: "textInput" as const,
-        label: "Text",
+        ...defaultNodeData("mediaInput"),
+        label: "Campaign input",
         value: brief,
       },
     },
@@ -47,7 +47,6 @@ export async function POST(req: Request) {
       id: `e-${textId}-${fluxId}`,
       source: textId,
       target: fluxId,
-      sourceHandle: "text",
       targetHandle: "text",
     },
   ];
@@ -72,14 +71,12 @@ export async function POST(req: Request) {
       id: `e-${textId}-${exportId}`,
       source: textId,
       target: exportId,
-      sourceHandle: "text",
       targetHandle: "text",
     });
     edges.push({
       id: `e-${fluxId}-${exportId}`,
       source: fluxId,
       target: exportId,
-      sourceHandle: "image",
       targetHandle: "image",
     });
   }

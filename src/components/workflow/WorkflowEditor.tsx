@@ -20,12 +20,11 @@ import { saveAs } from "file-saver";
 import JSZip from "jszip";
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 
+import { ThemeToggle } from "@/components/theme-toggle";
 import { FlowContextMenuPortal } from "@/components/workflow/FlowContextMenu";
 import { FalFluxSchnellNode } from "@/components/workflow/nodes/FalFluxSchnellNode";
-import { ImageInputNode } from "@/components/workflow/nodes/ImageInputNode";
+import { MediaInputNode } from "@/components/workflow/nodes/MediaInputNode";
 import { PlatformExportNode } from "@/components/workflow/nodes/PlatformExportNode";
-import { TextInputNode } from "@/components/workflow/nodes/TextInputNode";
-import { VideoInputNode } from "@/components/workflow/nodes/VideoInputNode";
 import type { AppNode } from "@/lib/workflow/app-node";
 import { topLeftForCenteredNode } from "@/lib/workflow/node-layout";
 import {
@@ -44,11 +43,10 @@ import {
   loadWorkflowDoc,
   saveWorkflowDoc,
 } from "@/lib/workflow/storage";
+import { normalizeWorkflowDocument } from "@/lib/workflow/migrate";
 
 const nodeTypes = {
-  textInput: TextInputNode,
-  imageInput: ImageInputNode,
-  videoInput: VideoInputNode,
+  mediaInput: MediaInputNode,
   falFluxSchnell: FalFluxSchnellNode,
   platformExport: PlatformExportNode,
 } satisfies NodeTypes;
@@ -284,13 +282,15 @@ export function WorkflowEditor() {
     setNodes([
       {
         id: textId,
-        type: "textInput",
+        type: "mediaInput",
         position: { x: 0, y: 0 },
         data: {
-          kind: "textInput",
-          label: "Text",
+          kind: "mediaInput",
+          label: "Campaign input",
           value:
             "Minimaliste beverage pour with condensation, studio lighting",
+          images: [],
+          videos: [],
         },
       },
       {
@@ -305,7 +305,6 @@ export function WorkflowEditor() {
         id: `e-${textId}-${fluxId}`,
         source: textId,
         target: fluxId,
-        sourceHandle: "text",
         targetHandle: "text",
         animated: true,
       },
@@ -346,12 +345,11 @@ export function WorkflowEditor() {
   const importJsonFile = async (file: File) => {
     try {
       const raw = JSON.parse(await file.text());
-      const parsed = workflowDocumentSchema.safeParse(raw);
-      if (!parsed.success) {
+      const doc = normalizeWorkflowDocument(raw);
+      if (!doc) {
         setStatus("Import failed — file is not a valid workflow");
         return;
       }
-      const doc = parsed.data;
       setWorkflowId(doc.id);
       setWorkflowName(doc.name);
       setNodes(
@@ -430,12 +428,11 @@ export function WorkflowEditor() {
         setStatus(body.error ?? "Suggest failed");
         return;
       }
-      const parsed = workflowDocumentSchema.safeParse(body.workflow);
-      if (!parsed.success) {
+      const doc = normalizeWorkflowDocument(body.workflow);
+      if (!doc) {
         setStatus("Suggest returned an invalid workflow");
         return;
       }
-      const doc = parsed.data;
       setWorkflowId(doc.id);
       setWorkflowName(doc.name);
       setNodes(
@@ -533,25 +530,25 @@ export function WorkflowEditor() {
 
   return (
     <>
-    <div className="flex h-[100dvh] flex-col bg-zinc-50 text-black dark:bg-black dark:text-zinc-50">
-      <header className="flex flex-wrap items-center gap-2 border-b border-black/10 px-4 py-3 text-sm dark:border-white/10">
+    <div className="flex h-[100dvh] flex-col bg-background text-foreground">
+      <header className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3 text-sm">
         <div className="mr-auto flex min-w-[200px] flex-1 flex-col gap-1">
-          <label className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+          <label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
             Campaign / workflow title
           </label>
           <input
             value={workflowName}
             onChange={(e) => setWorkflowName(e.target.value)}
-            className="rounded-md border border-black/10 bg-white px-2 py-1 text-sm dark:border-white/15 dark:bg-zinc-950"
+            className="rounded-md border border-border bg-card px-2 py-1 text-sm text-card-foreground"
           />
         </div>
         <div className="flex flex-1 flex-wrap items-end gap-2">
           <div className="flex flex-col gap-1">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               Library
             </span>
             <select
-              className="rounded-md border border-black/10 bg-white px-2 py-1 text-xs dark:border-white/15 dark:bg-zinc-950"
+              className="rounded-md border border-border bg-card px-2 py-1 text-xs text-card-foreground"
               defaultValue=""
               onChange={(e) => {
                 const v = e.target.value;
@@ -571,120 +568,105 @@ export function WorkflowEditor() {
           </div>
           <button
             type="button"
-            className="rounded-md border border-black/10 bg-white px-3 py-1 text-xs font-medium hover:bg-zinc-100 dark:border-white/15 dark:bg-zinc-950 dark:hover:bg-zinc-900"
+            className="rounded-md border border-border bg-card px-3 py-1 text-xs font-medium text-card-foreground hover:bg-accent"
             onClick={() => void removeFromLibrary(workflowId)}
           >
             Delete current
           </button>
           <button
             type="button"
-            className="rounded-md border border-black/10 bg-white px-3 py-1 text-xs font-medium hover:bg-zinc-100 dark:border-white/15 dark:bg-zinc-950 dark:hover:bg-zinc-900"
+            className="rounded-md border border-border bg-card px-3 py-1 text-xs font-medium text-card-foreground hover:bg-accent"
             onClick={createBlankWorkflow}
           >
             New
           </button>
           <button
             type="button"
-            className="rounded-md bg-black px-3 py-1 text-xs font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-black dark:hover:bg-white"
+            className="rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90"
             onClick={() => void runGraph()}
           >
             Run workflow
           </button>
           <button
             type="button"
-            className="rounded-md border border-black/10 bg-white px-3 py-1 text-xs font-medium hover:bg-zinc-100 dark:border-white/15 dark:bg-zinc-950 dark:hover:bg-zinc-900"
+            className="rounded-md border border-border bg-card px-3 py-1 text-xs font-medium text-card-foreground hover:bg-accent"
             onClick={() => void downloadZip()}
           >
             Download ZIP
           </button>
+          <ThemeToggle />
         </div>
       </header>
 
       <div className="flex flex-1 overflow-hidden">
-        <aside className="w-56 shrink-0 space-y-2 border-r border-black/10 bg-white px-3 py-3 text-xs dark:border-white/10 dark:bg-zinc-950">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
-            Input nodes
+        <aside className="w-56 shrink-0 space-y-2 border-r border-border bg-card px-3 py-3 text-xs text-card-foreground">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Input
           </p>
-          <div className="flex flex-col gap-2">
-            <button
-              type="button"
-              className="rounded-md border border-black/10 px-2 py-1 text-left hover:bg-zinc-50 dark:border-white/15 dark:hover:bg-zinc-900"
-              onClick={() => addBlock("textInput")}
-            >
-              Text
-            </button>
-            <button
-              type="button"
-              className="rounded-md border border-black/10 px-2 py-1 text-left hover:bg-zinc-50 dark:border-white/15 dark:hover:bg-zinc-900"
-              onClick={() => addBlock("imageInput")}
-            >
-              Image
-            </button>
-            <button
-              type="button"
-              className="rounded-md border border-black/10 px-2 py-1 text-left hover:bg-zinc-50 dark:border-white/15 dark:hover:bg-zinc-900"
-              onClick={() => addBlock("videoInput")}
-            >
-              Video
-            </button>
-          </div>
-          <p className="pt-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+          <button
+            type="button"
+            className="w-full rounded-md border border-border px-2 py-1 text-left text-card-foreground hover:bg-accent"
+            onClick={() => addBlock("mediaInput")}
+          >
+            Campaign input
+          </button>
+          <p className="pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
             Generation
           </p>
           <button
             type="button"
-            className="w-full rounded-md border border-black/10 px-2 py-1 text-left hover:bg-zinc-50 dark:border-white/15 dark:hover:bg-zinc-900"
+            className="w-full rounded-md border border-border px-2 py-1 text-left text-card-foreground hover:bg-accent"
             onClick={() => addBlock("falFluxSchnell")}
           >
             Flux Schnell (Fal)
           </button>
-          <p className="pt-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+          <p className="pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
             Delivery
           </p>
           <button
             type="button"
-            className="w-full rounded-md border border-black/10 px-2 py-1 text-left hover:bg-zinc-50 dark:border-white/15 dark:hover:bg-zinc-900"
+            className="w-full rounded-md border border-border px-2 py-1 text-left text-card-foreground hover:bg-accent"
             onClick={() => addBlock("platformExport")}
           >
             Platform export
           </button>
-          <p className="pt-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+          <p className="pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
             Quick start
           </p>
           <button
             type="button"
-            className="w-full rounded-md border border-dashed border-black/20 px-2 py-1 text-left hover:bg-zinc-50 dark:border-white/20 dark:hover:bg-zinc-900"
+            className="w-full rounded-md border border-dashed border-border px-2 py-1 text-left text-card-foreground hover:bg-accent"
             onClick={starterWorkflow}
           >
             Insert Text → Flux graph
           </button>
-          <p className="pt-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+          <p className="pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
             Suggest layout (template)
           </p>
           <textarea
             value={suggestBrief}
             onChange={(e) => setSuggestBrief(e.target.value)}
             placeholder="e.g. Summer soda promo for Gen Z, mention TikTok…"
-            className="min-h-[72px] w-full resize-none rounded-md border border-black/10 bg-zinc-50 px-2 py-1 text-[11px] text-black outline-none dark:border-white/15 dark:bg-black dark:text-zinc-50"
+            className="min-h-[72px] w-full resize-none rounded-md border border-border bg-muted px-2 py-1 text-[11px] text-foreground outline-none"
           />
           <button
             type="button"
-            className="w-full rounded-md border border-black/10 bg-black px-2 py-1 text-left text-[11px] font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-black dark:hover:bg-white"
+            className="w-full rounded-md bg-primary px-2 py-1 text-left text-[11px] font-medium text-primary-foreground hover:bg-primary/90"
             onClick={() => void suggestFromServer()}
           >
             Apply suggestion
           </button>
-          <div className="pt-4 space-y-2 border-t border-black/10 dark:border-white/10">
+          <div className="space-y-2 border-t border-border pt-4">
             <button
               type="button"
-              className="w-full rounded-md border border-black/10 px-2 py-1 text-left hover:bg-zinc-50 dark:border-white/15 dark:hover:bg-zinc-900"
+              className="w-full rounded-md border border-border px-2 py-1 text-left text-card-foreground hover:bg-accent"
               onClick={exportJson}
             >
               Export JSON
             </button>
             <button
               type="button"
-              className="w-full rounded-md border border-black/10 px-2 py-1 text-left hover:bg-zinc-50 dark:border-white/15 dark:hover:bg-zinc-900"
+              className="w-full rounded-md border border-border px-2 py-1 text-left text-card-foreground hover:bg-accent"
               onClick={() => importRef.current?.click()}
             >
               Import JSON
@@ -724,10 +706,10 @@ export function WorkflowEditor() {
         </div>
       </div>
 
-      <footer className="flex flex-wrap items-center gap-3 border-t border-black/10 bg-white px-4 py-2 text-xs text-zinc-600 dark:border-white/10 dark:bg-zinc-950 dark:text-zinc-300">
-        {status ? <span>{status}</span> : <span>Idle</span>}
+      <footer className="flex flex-wrap items-center gap-3 border-t border-border bg-card px-4 py-2 text-xs text-muted-foreground">
+        {status ? <span className="text-foreground">{status}</span> : <span>Idle</span>}
         {lastOutputs ? (
-          <span className="text-zinc-500">
+          <span>
             Last run: {Object.keys(lastOutputs).length} node outputs
           </span>
         ) : null}

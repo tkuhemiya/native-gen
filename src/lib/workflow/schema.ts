@@ -1,6 +1,13 @@
 import { z } from "zod";
 
-export const WORKFLOW_DOCUMENT_VERSION = 1 as const;
+export const WORKFLOW_DOCUMENT_VERSION = 2 as const;
+
+const mediaAssetSchema = z.object({
+  dataUrl: z.string(),
+  fileName: z.string().optional(),
+});
+
+export type MediaInputAsset = z.infer<typeof mediaAssetSchema>;
 
 const positionSchema = z.object({
   x: z.number(),
@@ -15,21 +22,11 @@ const baseNodeSchema = z.object({
 
 export const nodeDataSchema = z.discriminatedUnion("kind", [
   z.object({
-    kind: z.literal("textInput"),
+    kind: z.literal("mediaInput"),
     label: z.string(),
     value: z.string(),
-  }),
-  z.object({
-    kind: z.literal("imageInput"),
-    label: z.string(),
-    dataUrl: z.string().optional(),
-    fileName: z.string().optional(),
-  }),
-  z.object({
-    kind: z.literal("videoInput"),
-    label: z.string(),
-    dataUrl: z.string().optional(),
-    fileName: z.string().optional(),
+    images: z.array(mediaAssetSchema).default([]),
+    videos: z.array(mediaAssetSchema).default([]),
   }),
   z.object({
     kind: z.literal("falFluxSchnell"),
@@ -72,9 +69,7 @@ export type WorkflowEdge = z.infer<typeof workflowEdgeSchema>;
 export type NodeData = z.infer<typeof nodeDataSchema>;
 
 export const NODE_TYPES = [
-  "textInput",
-  "imageInput",
-  "videoInput",
+  "mediaInput",
   "falFluxSchnell",
   "platformExport",
 ] as const;
@@ -83,12 +78,14 @@ export type CanvasNodeType = (typeof NODE_TYPES)[number];
 
 export function defaultNodeData(type: CanvasNodeType): NodeData {
   switch (type) {
-    case "textInput":
-      return { kind: "textInput", label: "Text", value: "" };
-    case "imageInput":
-      return { kind: "imageInput", label: "Image" };
-    case "videoInput":
-      return { kind: "videoInput", label: "Video" };
+    case "mediaInput":
+      return {
+        kind: "mediaInput",
+        label: "Campaign input",
+        value: "",
+        images: [],
+        videos: [],
+      };
     case "falFluxSchnell":
       return {
         kind: "falFluxSchnell",

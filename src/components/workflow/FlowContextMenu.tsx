@@ -27,7 +27,7 @@ export function FlowContextMenuPortal({
 
   const pad = 8;
   const estW = 220;
-  const estH = menu.kind === "pane" ? 300 : 120;
+  const estH = menu.kind === "pane" ? 240 : 120;
   const left = Math.max(
     pad,
     Math.min(menu.clientX, window.innerWidth - estW - pad),
@@ -37,44 +37,28 @@ export function FlowContextMenuPortal({
     Math.min(menu.clientY, window.innerHeight - estH - pad),
   );
   const itemCls =
-    "block w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-900";
+    "block w-full px-3 py-1.5 text-left text-card-foreground hover:bg-accent";
   const labelCls =
-    "px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-500";
+    "px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground";
 
   return createPortal(
     <div
       ref={menuRef}
       role="menu"
-      className="fixed z-[200] max-h-[min(20rem,calc(100vh-2rem))] w-[13.5rem] overflow-y-auto rounded-lg border border-black/10 bg-white py-1 text-xs shadow-lg dark:border-white/15 dark:bg-zinc-950"
+      className="fixed z-[200] max-h-[min(20rem,calc(100vh-2rem))] w-[13.5rem] overflow-y-auto rounded-lg border border-border bg-card py-1 text-xs text-card-foreground shadow-lg"
       style={{ left, top }}
       onContextMenu={(e) => e.preventDefault()}
     >
       {menu.kind === "pane" ? (
         <>
-          <p className={labelCls}>Input nodes</p>
+          <p className={labelCls}>Input</p>
           <button
             type="button"
             role="menuitem"
             className={itemCls}
-            onClick={() => onAddBlock("textInput")}
+            onClick={() => onAddBlock("mediaInput")}
           >
-            Text
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className={itemCls}
-            onClick={() => onAddBlock("imageInput")}
-          >
-            Image
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className={itemCls}
-            onClick={() => onAddBlock("videoInput")}
-          >
-            Video
+            Campaign input
           </button>
           <p className={labelCls}>Generation</p>
           <button
@@ -108,7 +92,7 @@ export function FlowContextMenuPortal({
           <button
             type="button"
             role="menuitem"
-            className={`${itemCls} text-red-600 dark:text-red-400`}
+            className={`${itemCls} text-destructive`}
             onClick={() => onDeleteNode(menu.nodeId)}
           >
             Delete
