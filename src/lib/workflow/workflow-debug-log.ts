@@ -61,10 +61,22 @@ export function logWorkflow(
         : level === "debug"
           ? console.debug
           : console.info;
-  if (safeData && Object.keys(safeData).length > 0) {
+
+  /** Next/Turbopack dev overlays often cannot clone arbitrary objects → second arg renders as `{}`. */
+  let inlineDetails = "";
+  if (safeData && Object.keys(safeData).length > 0 && (level === "error" || level === "warn")) {
+    try {
+      const json = JSON.stringify(safeData);
+      inlineDetails = `\n${json.length > 8000 ? `${json.slice(0, 8000)}… (${json.length} chars)` : json}`;
+    } catch {
+      inlineDetails = "\n(unserializable log data)";
+    }
+  }
+
+  if (safeData && Object.keys(safeData).length > 0 && !inlineDetails) {
     consoleFn(`${PREFIX} [${scope}] ${message}`, safeData);
   } else {
-    consoleFn(`${PREFIX} [${scope}] ${message}`);
+    consoleFn(`${PREFIX} [${scope}] ${message}${inlineDetails}`);
   }
 
   void import("./storage")

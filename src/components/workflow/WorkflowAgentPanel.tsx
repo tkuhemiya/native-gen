@@ -556,7 +556,7 @@ export function WorkflowAgentPanel({
               Posts workflow agent
             </p>
             <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
-              Describe hooks and creatives; paste or attach reference images — they load into the Brief / posts node after send. Runs are Flux stills plus optional captions only.
+              Describe hooks and creatives; paste or attach reference images — they load into the Brief / posts node after send. Runs use fal still-image generation plus optional captions.
             </p>
           </div>
           <div

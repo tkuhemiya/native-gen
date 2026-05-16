@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import {
   assertSafeFalEndpointId,
-  buildFluxSchnellQueueInput,
+  buildTextToImageQueueInput,
   DEFAULT_FAL_TEXT_TO_IMAGE_MODEL,
   extractFalImagesUrl,
   falFluxPresetSizeSchema,
@@ -19,8 +19,8 @@ const bodySchema = z.object({
 });
 
 /**
- * Text → image via fal (workflow Flux node). Flux Schnell–compatible input; default model ID is
- * {@link DEFAULT_FAL_TEXT_TO_IMAGE_MODEL} (**$0.003/MP** — see `src/lib/fal/fal-model-pricing.ts`).
+ * Text → image via fal. Payload shape depends on `FAL_TEXT_TO_IMAGE_MODEL`
+ * (default {@link DEFAULT_FAL_TEXT_TO_IMAGE_MODEL}).
  */
 export async function POST(req: Request) {
   if (!process.env.FAL_KEY) {
@@ -50,7 +50,7 @@ export async function POST(req: Request) {
   try {
     fal.config({ credentials: process.env.FAL_KEY });
 
-    const input = buildFluxSchnellQueueInput({
+    const input = buildTextToImageQueueInput(endpointId, {
       prompt,
       imageSize,
       numInferenceSteps,

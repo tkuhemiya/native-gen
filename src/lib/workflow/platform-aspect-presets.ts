@@ -4,7 +4,7 @@ import type { WorkflowEdge, WorkflowNode } from "./schema";
 type ExportPlatform = "youtube" | "facebook" | "instagram" | "tiktok";
 
 /**
- * Best-effort Flux preset for a platform export (labels disambiguate IG Feed vs Stories).
+ * Best-effort aspect preset for a platform export (labels disambiguate IG Feed vs Stories).
  */
 export function fluxPresetForExport(
   platform: ExportPlatform,

@@ -17,10 +17,10 @@ export function listFalModelCatalogForAgent(): FalModelCatalogEntry[] {
   return [
     {
       intent: "text-to-image",
-      label: "Text → image (FLUX Schnell class)",
+      label: "Text → image (configured fal endpoint)",
       endpointId: getFalTextToImageEndpointId(),
       notes:
-        "Used when a generation block outputs image from text only. Pricing on fal is often ~$0.003/MP for Schnell — verify on the model page.",
+        "Text-only when no reference image pin. With a reference on the gen blue pin, the runner uses FAL_IMAGE_EDIT_MODEL (default openai/gpt-image-2/edit). Low/res via FAL_OPENAI_GPT_IMAGE_2_*.",
     },
     {
       intent: "image-to-text",

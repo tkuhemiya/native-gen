@@ -6,9 +6,11 @@ import { getFalImageCaptionEndpointId } from "@/lib/fal/generation-models";
 import { resolveImageUrlForFal } from "@/lib/fal/resolve-image-url";
 import {
   assertSafeFalEndpointId,
-  buildFluxSchnellQueueInput,
+  buildOpenAiGptImage2EditQueueInput,
+  buildTextToImageQueueInput,
   extractFalImagesUrl,
   falFluxPresetSizeSchema,
+  getFalImageEditEndpointId,
   getFalTextToImageEndpointId,
   getFalTextToImageQueuePriority,
 } from "@/lib/fal/text-to-image-config";
@@ -19,6 +21,12 @@ const bodySchema = z.discriminatedUnion("intent", [
     prompt: z.string().min(1).max(4000),
     imageSize: falFluxPresetSizeSchema,
     numInferenceSteps: z.number().min(1).max(12),
+  }),
+  z.object({
+    intent: z.literal("image-to-image-edit"),
+    prompt: z.string().min(1).max(4000),
+    imageSize: falFluxPresetSizeSchema,
+    imageUrls: z.array(z.string().min(10).max(25 * 1024 * 1024)).min(1).max(4),
   }),
   z.object({
     intent: z.literal("image-to-text"),
@@ -68,7 +76,7 @@ function formatFalClientError(e: unknown): string {
   return e instanceof Error ? e.message : "Fal request failed";
 }
 
-/** Fal proxy for workflow runs: Flux image generation + Florence captions only. */
+/** Fal proxy for workflow runs: text→image + Florence captions (model from `FAL_TEXT_TO_IMAGE_MODEL`). */
 export async function POST(req: Request) {
   if (!process.env.FAL_KEY) {
     return NextResponse.json(
@@ -80,7 +88,18 @@ export async function POST(req: Request) {
   const json = await req.json().catch(() => null);
   const parsed = bodySchema.safeParse(json);
   if (!parsed.success) {
-    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+    const detail = parsed.error.issues
+      .slice(0, 8)
+      .map((i) =>
+        [...i.path.map(String), i.message].filter(Boolean).join(": "),
+      )
+      .join("; ");
+    return NextResponse.json(
+      {
+        error: detail ? `Invalid request — ${detail}` : "Invalid request body",
+      },
+      { status: 400 },
+    );
   }
 
   const payload = parsed.data;
@@ -93,10 +112,35 @@ export async function POST(req: Request) {
       case "text-to-image": {
         const endpointId = getFalTextToImageEndpointId();
         assertSafeFalEndpointId(endpointId);
-        const input = buildFluxSchnellQueueInput({
+        const input = buildTextToImageQueueInput(endpointId, {
           prompt: payload.prompt,
           imageSize: payload.imageSize,
           numInferenceSteps: payload.numInferenceSteps,
+        });
+        const result = await fal.subscribe(endpointId, {
+          input,
+          logs: true,
+          priority,
+        });
+        const url = extractFalImagesUrl(result.data);
+        if (!url) {
+          return NextResponse.json(
+            { error: "Fal did not return an image URL" },
+            { status: 502 },
+          );
+        }
+        return NextResponse.json({ image: { url } });
+      }
+      case "image-to-image-edit": {
+        const endpointId = getFalImageEditEndpointId();
+        assertSafeFalEndpointId(endpointId);
+        const hostedUrls = await Promise.all(
+          payload.imageUrls.map((u) => resolveImageUrlForFal(u)),
+        );
+        const input = buildOpenAiGptImage2EditQueueInput({
+          prompt: payload.prompt,
+          imageSize: payload.imageSize,
+          imageUrls: hostedUrls,
         });
         const result = await fal.subscribe(endpointId, {
           input,

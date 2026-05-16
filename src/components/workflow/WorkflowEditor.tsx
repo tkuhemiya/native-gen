@@ -697,7 +697,9 @@ export function WorkflowEditor() {
             </button>
             <button
               type="button"
-              className="rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+              disabled={runPhase === "running"}
+              title={runPhase === "running" ? "Workflow is running" : undefined}
+              className="rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
               onClick={() => void runGraph()}
             >
               Run workflow

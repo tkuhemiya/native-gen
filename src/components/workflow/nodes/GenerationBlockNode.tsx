@@ -33,7 +33,7 @@ function isFluxPresetSize(v: string): v is FalFluxPresetSize {
 }
 
 const STEPS_TOOLTIP =
-  "Fewer steps render faster (try 2–4). Applies when this node outputs an image.";
+  "Inference steps apply only to Flux Schnell (`FAL_TEXT_TO_IMAGE_MODEL=fal-ai/flux/schnell`). Ignored for GPT Image 2, GPT Image Mini, etc.";
 
 const SUMMARY_CLS =
   "nodrag nopan cursor-pointer select-none list-none px-2 py-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground [&::-webkit-details-marker]:hidden";
@@ -136,7 +136,7 @@ export function GenerationBlockNode(props: NodeProps<AppNode>) {
               className="text-[9px] text-muted-foreground"
               title="Blue in: reference product still (optional). Green out: promo copy + hashtags when both green and blue outs are wired."
             >
-              Flux · poster + social text
+              Image · poster + social text
             </span>
           </div>
           {!edgesOut.none && edgesOut.hasTextOut && !edgesOut.hasImageOut ? (

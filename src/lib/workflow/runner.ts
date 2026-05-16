@@ -192,6 +192,12 @@ function extractFalProxyErrorMessage(
   if (trimmed.length > 0 && trimmed.length <= 16_000) {
     return trimmed.slice(0, 6000);
   }
+  if (trimmed.length > 16_000) {
+    return [
+      `Generation failed (${httpStatus}); response body very large (${trimmed.length} chars)`,
+      trimmed.slice(0, 280),
+    ].join(" — preview: ");
+  }
 
   return `Generation failed (${httpStatus})`;
 }
@@ -404,6 +410,9 @@ export async function runWorkflowDAG(
         let imageUrlOut: string | undefined;
         let productAnchor: string | undefined;
 
+        const refImgsAll = collectUpstreamImageUrls(id, incomingByTarget, outputs);
+        const refUrlForGen = refImgsAll[0];
+
         if (plan.needPassthroughText) {
           if (!promptNotes) {
             throw new GraphError("Text output needs upstream copy wired to the text pin");
@@ -427,47 +436,52 @@ export async function runWorkflowDAG(
           textOut = [caption, promptNotes].filter(Boolean).join("\n\n");
         }
 
-        if (plan.needReferenceProductCaption) {
-          const refImgs = collectUpstreamImageUrls(id, incomingByTarget, outputs);
-          const refUrl = refImgs[0];
-          if (!refUrl) {
-            throw new GraphError(
-              "Wire the product/reference still into the blue image pin so Flux can stay faithful to the SKU.",
-            );
+        let imageGenPrompt =
+          `${diffusionPrompt}\n\nMarketing poster still, campaign-ready composition.`.trim();
+        if (refUrlForGen && plan.needTextToImage) {
+          imageGenPrompt =
+            `Preserve the exact product, packaging, logos, and readable label text from the reference photo; do not substitute a different SKU or conflicting branding.\n\nCreative direction:\n${diffusionPrompt}\n\nMarketing-poster composition with clean headline-safe margins.`.trim();
+        }
+        imageGenPrompt = imageGenPrompt.slice(0, 4000);
+
+        if (plan.needTextToImage) {
+          if (refUrlForGen) {
+            const body = await postGeneration({
+              intent: "image-to-image-edit",
+              prompt: imageGenPrompt,
+              imageSize: data.imageSize,
+              imageUrls: [refUrlForGen],
+            });
+            const url =
+              typeof (body.image as { url?: string } | undefined)?.url === "string"
+                ? (body.image as { url: string }).url
+                : undefined;
+            if (!url) throw new GraphError("Image edit missing URL");
+            imageUrlOut = url;
+          } else {
+            const body = await postGeneration({
+              intent: "text-to-image",
+              prompt: imageGenPrompt,
+              imageSize: data.imageSize,
+              numInferenceSteps: data.numInferenceSteps,
+            });
+            const url =
+              typeof (body.image as { url?: string } | undefined)?.url === "string"
+                ? (body.image as { url: string }).url
+                : undefined;
+            if (!url) throw new GraphError("Image generation missing URL");
+            imageUrlOut = url;
           }
+        }
+
+        if (plan.needMarketingSocialCopy && plan.needReferenceImageEdit && refUrlForGen) {
           const cap = await postGeneration({
             intent: "image-to-text",
-            imageUrl: refUrl,
+            imageUrl: refUrlForGen,
           });
           const caption =
             typeof cap.text === "string" ? cap.text.trim() : "";
-          if (!caption) {
-            throw new GraphError("Reference image caption returned empty text");
-          }
-          productAnchor = caption;
-        }
-
-        let fluxPrompt = diffusionPrompt;
-        if (productAnchor?.trim()) {
-          fluxPrompt = `[Reference product — match accurately (packaging shape, visible label text, palette, logo):\n${productAnchor.trim()}\n]\n\nMarketing poster still: premium ad composition with clean negative space for headline overlays. Keep the SAME product identity as the reference; never swap in conflicting branding or labels.\n\nCreative brief:\n${diffusionPrompt}`;
-        } else if (plan.needTextToImage) {
-          fluxPrompt = `${diffusionPrompt}\n\nMarketing poster still, campaign-ready composition.`;
-        }
-        fluxPrompt = fluxPrompt.trim().slice(0, 4000);
-
-        if (plan.needTextToImage) {
-          const body = await postGeneration({
-            intent: "text-to-image",
-            prompt: fluxPrompt,
-            imageSize: data.imageSize,
-            numInferenceSteps: data.numInferenceSteps,
-          });
-          const url =
-            typeof (body.image as { url?: string } | undefined)?.url === "string"
-              ? (body.image as { url: string }).url
-              : undefined;
-          if (!url) throw new GraphError("Image generation missing URL");
-          imageUrlOut = url;
+          if (caption) productAnchor = caption;
         }
 
         if (plan.needMarketingSocialCopy) {

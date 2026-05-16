@@ -35,16 +35,16 @@ export function outgoingMediaLanes(nodeId: string, edges: WorkflowEdge[]): Media
 export type GenerationPlan = {
   /** Echo upstream copy (+ node suffix already blended into promptBase by runner). */
   needPassthroughText: boolean;
-  /** fal-ai/florence-2-large/caption — text-only output describing upstream image (no Flux). */
+  /** fal-ai/florence-2-large/caption — text-only output describing upstream image (no image render). */
   needCaption: boolean;
-  /** Flux Schnell text→image when this block outputs an image. */
+  /** fal text→image when this block outputs an image. */
   needTextToImage: boolean;
   /**
-   * Run Florence on the wired reference image before Flux so the prompt can insist on
-   * accurate product/branding (Schnell itself is text-only).
+   * Reference image on the blue pin while outputting image → `openai/gpt-image-2/edit` (photo-accurate),
+   * not text-only conditioning.
    */
-  needReferenceProductCaption: boolean;
-  /** When both text+image pins are used, fill the text pin with promo copy + hashtags after Flux. */
+  needReferenceImageEdit: boolean;
+  /** When both text+image pins are used, fill the text pin with promo copy + hashtags after image gen. */
   needMarketingSocialCopy: boolean;
 };
 
@@ -61,12 +61,12 @@ export function planGeneration(inL: MediaLanes, outL: MediaLanes): GenerationPla
   /** Text-only relay: upstream text → downstream text (no reference image, no poster render). */
   const needPassthroughText = Boolean(outL.text && inL.text && !inL.image && !outL.image);
 
-  /** Describe upstream image when this block outputs text but not a Flux image. */
+  /** Describe upstream image when this block outputs text but not an image render. */
   const needCaption = Boolean(outL.text && inL.image && !outL.image);
 
   const needTextToImage = Boolean(outL.image);
 
-  const needReferenceProductCaption = Boolean(needTextToImage && inL.image);
+  const needReferenceImageEdit = Boolean(needTextToImage && inL.image);
 
   const needMarketingSocialCopy = Boolean(outL.text && outL.image);
 
@@ -74,7 +74,7 @@ export function planGeneration(inL: MediaLanes, outL: MediaLanes): GenerationPla
     needPassthroughText,
     needCaption,
     needTextToImage,
-    needReferenceProductCaption,
+    needReferenceImageEdit,
     needMarketingSocialCopy,
   };
 }

@@ -1,14 +1,25 @@
 import { z } from "zod";
 
 /**
- * Fal text→image (workflow Flux node → POST `/api/fal/text-to-image`).
+ * Fal text→image for workflow generation blocks (`/api/fal/generation`, `/api/fal/text-to-image`).
  *
- * **Billing:** Flux.1 [schnell] is **$0.003 per megapixel** on
- * https://fal.ai/models/fal-ai/flux/schnell — see `src/lib/fal/fal-model-pricing.ts` for estimates.
+ * Default model is **`openai/gpt-image-2`** (low quality + smaller presets — see mappers below).
+ * Override with `FAL_TEXT_TO_IMAGE_MODEL` (e.g. `fal-ai/flux/schnell`) — see `buildTextToImageQueueInput`.
  */
 
-/** Default fal queue model for our text→image route (cheapest Flux text→image tier we support). */
-export const DEFAULT_FAL_TEXT_TO_IMAGE_MODEL = "fal-ai/flux/schnell";
+/** Default fal queue model for text→image (override with `FAL_TEXT_TO_IMAGE_MODEL`). */
+export const DEFAULT_FAL_TEXT_TO_IMAGE_MODEL = "openai/gpt-image-2";
+
+/** Fal-hosted OpenAI GPT Image 2 text→image (`openai/gpt-image-2`); not the `/edit` endpoint. */
+export function isOpenAiGptImage2Endpoint(endpointId: string): boolean {
+  const id = endpointId.trim();
+  return id.includes("gpt-image-2") && !id.includes("/edit");
+}
+
+/** Substring match so forks like `fal-ai/gpt-image-1-mini/foo` still route correctly. */
+export function isGptImageMiniEndpoint(endpointId: string): boolean {
+  return endpointId.includes("gpt-image-1-mini");
+}
 
 /**
  * Named `image_size` values documented for fal-ai/flux/schnell (preset aspect ratios).
@@ -104,6 +115,155 @@ export function buildFluxSchnellQueueInput(payload: {
     output_format: getFalFluxOutputFormat(),
     acceleration: getFalFluxAcceleration(),
   };
+}
+
+/** GPT Image Mini `image_size` enum (camelCase string tokens per fal API). */
+export type GptImageMiniPixelSize = "auto" | "1024x1024" | "1536x1024" | "1024x1536";
+
+/** Map workflow aspect presets to GPT Image Mini sizes (closest aspect bucket). */
+export function mapFluxPresetToGptImageMiniSize(preset: FalFluxPresetSize): GptImageMiniPixelSize {
+  switch (preset) {
+    case "landscape_16_9":
+    case "landscape_4_3":
+      return "1536x1024";
+    case "portrait_16_9":
+    case "portrait_4_3":
+      return "1024x1536";
+    case "square_hd":
+    case "square":
+      return "1024x1024";
+    default: {
+      const _ex: never = preset;
+      return _ex;
+    }
+  }
+}
+
+export type GptImageMiniQuality = "auto" | "low" | "medium" | "high";
+
+function getFalGptImageQuality(): GptImageMiniQuality {
+  const raw = process.env.FAL_GPT_IMAGE_QUALITY?.trim().toLowerCase();
+  if (raw === "low" || raw === "medium" || raw === "high" || raw === "auto") return raw;
+  return "auto";
+}
+
+export type GptImageMiniOutputFormat = "jpeg" | "png" | "webp";
+
+/** Output format for GPT Image Mini (`FAL_GPT_IMAGE_OUTPUT_FORMAT`, default jpeg). */
+export function getFalGptImageOutputFormat(): GptImageMiniOutputFormat {
+  const raw = process.env.FAL_GPT_IMAGE_OUTPUT_FORMAT?.trim().toLowerCase();
+  if (raw === "png" || raw === "webp") return raw;
+  return "jpeg";
+}
+
+/** fal-ai/gpt-image-1-mini queue input (camelCase keys in JSON per OpenAPI). */
+export function buildGptImageMiniQueueInput(payload: {
+  prompt: string;
+  imageSize: FalFluxPresetSize;
+}): Record<string, unknown> {
+  return {
+    prompt: payload.prompt,
+    image_size: mapFluxPresetToGptImageMiniSize(payload.imageSize),
+    background: "auto",
+    quality: getFalGptImageQuality(),
+    num_images: 1,
+    output_format: getFalGptImageOutputFormat(),
+  };
+}
+
+/**
+ * Shrink workflow presets toward fewer pixels for openai/gpt-image-2 (`square_hd` → `square`, etc.).
+ */
+export function mapFluxPresetToOpenAiGptImage2LowResPreset(
+  preset: FalFluxPresetSize,
+): FalFluxPresetSize {
+  switch (preset) {
+    case "square_hd":
+      return "square";
+    case "landscape_4_3":
+      return "landscape_16_9";
+    case "portrait_4_3":
+      return "portrait_16_9";
+    default:
+      return preset;
+  }
+}
+
+export type OpenAiGptImage2Quality = "auto" | "low" | "medium" | "high";
+
+/** Default `low`; override with `FAL_OPENAI_GPT_IMAGE_2_QUALITY`. */
+export function getOpenAiGptImage2Quality(): OpenAiGptImage2Quality {
+  const raw = process.env.FAL_OPENAI_GPT_IMAGE_2_QUALITY?.trim().toLowerCase();
+  if (raw === "auto" || raw === "low" || raw === "medium" || raw === "high") return raw;
+  return "low";
+}
+
+export type OpenAiGptImage2OutputFormat = "jpeg" | "png" | "webp";
+
+/** Default jpeg; override `FAL_OPENAI_GPT_IMAGE_2_OUTPUT_FORMAT`. */
+export function getOpenAiGptImage2OutputFormat(): OpenAiGptImage2OutputFormat {
+  const raw = process.env.FAL_OPENAI_GPT_IMAGE_2_OUTPUT_FORMAT?.trim().toLowerCase();
+  if (raw === "png" || raw === "webp") return raw;
+  return "jpeg";
+}
+
+/** openai/gpt-image-2 queue input (same preset enum names as Flux on fal). */
+export function buildOpenAiGptImage2QueueInput(payload: {
+  prompt: string;
+  imageSize: FalFluxPresetSize;
+}): Record<string, unknown> {
+  return {
+    prompt: payload.prompt,
+    image_size: mapFluxPresetToOpenAiGptImage2LowResPreset(payload.imageSize),
+    quality: getOpenAiGptImage2Quality(),
+    num_images: 1,
+    output_format: getOpenAiGptImage2OutputFormat(),
+  };
+}
+
+/** Image + prompt edits (`openai/gpt-image-2/edit`); override with `FAL_IMAGE_EDIT_MODEL`. */
+export function getFalImageEditEndpointId(): string {
+  return process.env.FAL_IMAGE_EDIT_MODEL?.trim() || "openai/gpt-image-2/edit";
+}
+
+/** openai/gpt-image-2/edit — reference URLs must be https or uploaded via {@link resolveImageUrlForFal}. */
+export function buildOpenAiGptImage2EditQueueInput(payload: {
+  prompt: string;
+  imageSize: FalFluxPresetSize;
+  imageUrls: string[];
+}): Record<string, unknown> {
+  return {
+    prompt: payload.prompt,
+    image_urls: payload.imageUrls,
+    image_size: mapFluxPresetToOpenAiGptImage2LowResPreset(payload.imageSize),
+    quality: getOpenAiGptImage2Quality(),
+    num_images: 1,
+    output_format: getOpenAiGptImage2OutputFormat(),
+  };
+}
+
+/** Build the correct `input` object for whichever text→image endpoint is configured. */
+export function buildTextToImageQueueInput(
+  endpointId: string,
+  payload: {
+    prompt: string;
+    imageSize: FalFluxPresetSize;
+    numInferenceSteps: number;
+  },
+): Record<string, unknown> {
+  if (isOpenAiGptImage2Endpoint(endpointId)) {
+    return buildOpenAiGptImage2QueueInput({
+      prompt: payload.prompt,
+      imageSize: payload.imageSize,
+    });
+  }
+  if (isGptImageMiniEndpoint(endpointId)) {
+    return buildGptImageMiniQueueInput({
+      prompt: payload.prompt,
+      imageSize: payload.imageSize,
+    });
+  }
+  return buildFluxSchnellQueueInput(payload);
 }
 
 export function extractFalImagesUrl(resultData: unknown): string | undefined {

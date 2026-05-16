@@ -26,20 +26,22 @@ const workflowJsonInputSchema = z.object({
 });
 
 const SYSTEM = `
-You are a **workflow editor** for **social stills**: read the canvas JSON and apply intent with **write_workflow_canvas**. The app runs **Flux** (\`fal-ai/flux/schnell\`) for posters, **Florence** for reference/caption understanding, and (server-side) short **marketing copy + hashtags** when a block outputs **both** text and image — **no video / motion pins**. Use **\`text\`** (green) and **\`image\`** (blue) handles exclusively.
+You are a **workflow editor** for **social stills**: read the canvas JSON and apply intent with **write_workflow_canvas**. The app runs **fal text→image** (default \`openai/gpt-image-2\` at low quality / reduced presets; override \`FAL_TEXT_TO_IMAGE_MODEL\`), **Florence** for reference/caption understanding, and (server-side) short **marketing copy + hashtags** when a block outputs **both** text and image — **no video / motion pins**. Use **\`text\`** (green) and **\`image\`** (blue) handles exclusively.
 
 **Multi-platform campaigns:** When Instagram + Facebook (+ variants) should share **one** post, use **one** \`generationBlock\`: wire **mediaInput** \`text\`→gen **text** pin and **mediaInput** \`image\`→gen **image** pin for reference-accurate renders. Give the block **both outgoing** \`text\` **and** \`image\` pins connected downstream; **fan out** the **same** \`image\` edge and **same** \`text\` edge to **every** \`platformExport\` (each export’s green text pin needs the generated caption). Use **parallel** generationBlocks **only** if the user explicitly wants **different** visuals per destination.
+
+**Default destinations:** For a **marketing / campaign** ask (or any cross-platform still deliverable) where the user **does not** restrict platforms, include **one** \`platformExport\` for **each** supported platform — \`youtube\`, \`facebook\`, \`instagram\`, \`tiktok\` — all fed by that **same** fan-out. If they name only some platforms, omit the rest.
 
 ## WorkflowDocument shape
 - **Root:** \`id\` (uuid string), \`name\`, \`version\`: ${WORKFLOW_DOCUMENT_VERSION}, \`updatedAt\` (ISO-8601 string), \`nodes\`, \`edges\`
 - **Node:** \`id\`, \`type\` (\`mediaInput\` | \`generationBlock\` | \`platformExport\`), \`position\` { x, y }, \`data\` (must match type)
   - **mediaInput** \`data\`: \`kind: "mediaInput"\`, \`label\`, \`value\` (brief text), \`images\`[] — empty unless clearing uploads
-  - **generationBlock** \`data\`: \`kind: "generationBlock"\`, \`label\`, \`suffix\` (concrete visual brief for Flux — never slug-only), \`imageSize\` (preset id, e.g. \`landscape_16_9\`), \`numInferenceSteps\` (1–12; 2–4 is fast)
+  - **generationBlock** \`data\`: \`kind: "generationBlock"\`, \`label\`, \`suffix\` (concrete visual brief — never slug-only), \`imageSize\` (aspect preset; mapped per fal model — GPT Image 2 uses smaller presets when applicable), \`numInferenceSteps\` (1–12; **Flux Schnell only** when \`FAL_TEXT_TO_IMAGE_MODEL=fal-ai/flux/schnell\`)
   - **platformExport** \`data\`: \`kind: "platformExport"\`, \`label\`, \`platform\` (\`youtube\`|\`facebook\`|\`instagram\`|\`tiktok\`), optional \`metaPageId\` for Meta
 - **Edge:** \`id\`, \`source\`, \`target\`, \`sourceHandle\`, \`targetHandle\` — each is \`"text"\` or \`"image"\` (nullable handles allowed). **Wiring semantics:**
-  - Gen block **outputs \`image\` only** or **\`image\`+\`text\`**: **Flux** poster. **Always** wire **brief copy** to the gen **text** pin; wire **reference/product still** to the gen **image** pin when available — the runner analyzes it so packaging stays accurate.
-  - Gen block **outputs \`text\` only** with **\`image\` wired in**: Florence caption (no Flux).
-  - Gen block **outputs \`text\`+\`image\`**: after Flux, the **text** pin carries **promo copy + hashtags** for exports — connect it to each \`platformExport\` **text** pin.
+  - Gen block **outputs \`image\` only** or **\`image\`+\`text\`**: fal image generation. **Always** wire **brief copy** to the gen **text** pin. If a **reference/product still** is wired to the gen **blue image** pin, the runner calls \`openai/gpt-image-2/edit\` (low quality / reduced presets) so the SKU stays photo-accurate; otherwise it uses \`FAL_TEXT_TO_IMAGE_MODEL\` text→image.
+  - Gen block **outputs \`text\` only** with **\`image\` wired in**: Florence caption (no image render).
+  - Gen block **outputs \`text\`+\`image\`**: after image gen, the **text** pin carries **promo copy + hashtags** for exports — connect it to each \`platformExport\` **text** pin.
   - **text→text** chains: copy pass-through.
 
 ## Graph rules (enforced on write)
@@ -49,12 +51,12 @@ You are a **workflow editor** for **social stills**: read the canvas JSON and ap
 - If the user **pivots** the deliverable, you may **replace the whole graph** (new ids when topology no longer fits).
 
 ## Marketing / photo defaults
-- **Single hero + caption fan-out** for cross-platform still campaigns unless variants are requested.
+- **Single hero + caption fan-out** across **all** supported exports by default (\`youtube\`, \`facebook\`, \`instagram\`, \`tiktok\`) unless the brief limits platforms or asks for distinct assets per channel.
 - Thin briefs → invent concrete art direction in each block’s **\`suffix\`** (subject, setting, palette, lighting, negatives like “no watermark”).
 - Only fork into multiple generationBlocks when the brief demands **distinct** posters (carousel frames, platform-specific crops the user asked for).
 
-## Flux aspect (\`generationBlock.data.imageSize\`) vs destinations
-Set **\`imageSize\`** to match where the image will publish (preset ids are Flux/fal enums — same options as the node UI):
+## Canvas aspect presets (\`generationBlock.data.imageSize\`) vs destinations
+Set **\`imageSize\`** to match where the image will publish (enum maps to fal output sizes — same dropdown as the node UI):
 - **\`square_hd\`** — Instagram/Facebook **feed** squares and general 1:1 placements.
 - **\`portrait_16_9\`** — **Stories**, **Reels**, **TikTok** full-screen vertical (9:16).
 - **\`landscape_16_9\`** — **YouTube** thumbnails / horizontal 16:9.
@@ -102,7 +104,7 @@ function buildOpenAiPlannerProviderOptions(): ProviderOptions | undefined {
   } else if (REASONING_EFFORT_LEVELS.includes(raw as ReasoningEffort)) {
     effort = raw as ReasoningEffort;
   } else {
-    effort = "medium";
+    effort = "low";
   }
 
   if (!effort) return undefined;
@@ -284,7 +286,7 @@ function buildPlannerMessages(
 }
 
 export function workflowAgentLegacyUserContent(prompt: string): string {
-  return `Build a photo / still-image workflow (Flux generations + optional captions; no video):\n\n${prompt.trim().slice(0, 6000)}`;
+  return `Build a photo / still-image workflow (fal image generation + optional captions; no video):\n\n${prompt.trim().slice(0, 6000)}`;
 }
 
 export type WorkflowAgentGenerateResult = {
@@ -353,7 +355,7 @@ export async function generateWorkflowWithOpenAI(
   const snapshotForPrompt = canvasSnapshot ? stripWorkflowMediaForAgent(canvasSnapshot) : null;
   const canvasBlock = snapshotForPrompt
     ? `\n\n## Canvas snapshot (media binary stripped; empty arrays here still restore prior uploads per node id on save)\n\`\`\`json\n${JSON.stringify(snapshotForPrompt, null, 2)}\n\`\`\``
-    : `\n\n## Canvas snapshot\n_(empty — design a **photo workflow**: one \`mediaInput\` hub, **parallel** \`text\`→\`image\` generationBlocks for variants/carousel frames, optional \`text\` chains for copy, **one** \`platformExport\`; schema version ${WORKFLOW_DOCUMENT_VERSION}; fresh uuids.)_`;
+    : `\n\n## Canvas snapshot\n_(empty — design a **photo workflow**: one \`mediaInput\` hub; for a generic campaign/still-graph use **one** shared \`generationBlock\` (marketing: **both** \`text\`+\`image\` out) feeding **four** \`platformExport\` nodes \`youtube\`, \`facebook\`, \`instagram\`, \`tiktok\`; use **parallel** \`generationBlocks\` only for variants/carousel; schema version ${WORKFLOW_DOCUMENT_VERSION}; fresh uuids.)_`;
 
   const agentLog: string[] = [];
   const pushLog = (line: string) => {
@@ -398,7 +400,7 @@ export async function generateWorkflowWithOpenAI(
 
     const writeWorkflowCanvasTool = tool({
       description:
-        "Apply the full WorkflowDocument JSON (photo/stills only). Rewrite the whole DAG when the user pivots platform or creative scope; reuse mediaInput ids when uploads still apply. Prefer parallel **text→image** forks for variants; use **text→text** for copy iteration and **image→text** for captions. Do not collapse to a single generation block unless they ask for one asset.",
+        "Apply the full WorkflowDocument JSON (photo/stills only). Rewrite the whole DAG when the user pivots platform or creative scope; reuse mediaInput ids when uploads still apply. Default **marketing** workflows: **one** shared generation block (**text**+**image** pins out) fanning out to **all four** platformExports unless channels are narrowed. Prefer parallel **text→image** forks only when the user wants variants/carousel; use **text→text** for copy iteration and **image→text** for captions.",
       inputSchema: workflowJsonInputSchema,
       execute: async ({ workflowJson }) => {
         totalWriteAttempts += 1;

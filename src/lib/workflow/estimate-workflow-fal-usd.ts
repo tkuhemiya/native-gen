@@ -1,8 +1,13 @@
 import {
   FAL_FLORENCE_CAPTION_ESTIMATE_USD,
+  FAL_OPENAI_GPT_IMAGE_2_EDIT_ESTIMATE_USD,
   FAL_PRICING_DISCLAIMER,
-  falFluxSchnellImageUsd,
+  falTextToImageUsdForEndpoint,
 } from "@/lib/fal/fal-model-pricing";
+import {
+  getFalImageEditEndpointId,
+  getFalTextToImageEndpointId,
+} from "@/lib/fal/text-to-image-config";
 import { assertConnectedDAG, GraphError } from "./graph";
 import {
   incomingMediaLanes,
@@ -45,6 +50,7 @@ export function estimateWorkflowFalUsd(doc: WorkflowDocument): EstimateWorkflowF
   }
 
   const incomingByTarget = buildIncomingByTarget(doc.edges);
+  const textToImageEndpointId = getFalTextToImageEndpointId();
   const lineItems: FalCostLineItem[] = [];
   let totalUsd = 0;
 
@@ -73,20 +79,25 @@ export function estimateWorkflowFalUsd(doc: WorkflowDocument): EstimateWorkflowF
         detail: "fal-ai/florence-2-large/caption (listed $0/compute-s on fal)",
       });
     }
-    if (plan.needReferenceProductCaption) {
+    if (plan.needMarketingSocialCopy && plan.needReferenceImageEdit) {
       calls.push({
-        intent: "reference-product-caption",
+        intent: "image-to-text",
         usd: FAL_FLORENCE_CAPTION_ESTIMATE_USD,
-        detail:
-          "fal-ai/florence-2-large/caption — analyzes reference still before Flux",
+        detail: "fal-ai/florence-2-large/caption — product snippet for social copy (when wired)",
       });
     }
-    if (plan.needTextToImage) {
-      const usd = falFluxSchnellImageUsd(node.data.imageSize);
+    if (plan.needTextToImage && plan.needReferenceImageEdit) {
+      calls.push({
+        intent: "image-to-image-edit",
+        usd: FAL_OPENAI_GPT_IMAGE_2_EDIT_ESTIMATE_USD,
+        detail: `${getFalImageEditEndpointId()} · low / reduced presets`,
+      });
+    } else if (plan.needTextToImage) {
+      const usd = falTextToImageUsdForEndpoint(textToImageEndpointId, node.data.imageSize);
       calls.push({
         intent: "text-to-image",
         usd,
-        detail: `fal-ai/flux/schnell · ${node.data.imageSize} · $0.003/MP`,
+        detail: `${textToImageEndpointId} · ${node.data.imageSize}`,
       });
     }
 
