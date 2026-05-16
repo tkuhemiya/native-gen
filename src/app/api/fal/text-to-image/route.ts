@@ -20,7 +20,7 @@ const bodySchema = z.object({
 
 /**
  * Text → image via fal (workflow Flux node). Flux Schnell–compatible input; default model ID is
- * {@link DEFAULT_FAL_TEXT_TO_IMAGE_MODEL} (~$0.003/MP on fal — verify on the model page).
+ * {@link DEFAULT_FAL_TEXT_TO_IMAGE_MODEL} (**$0.003/MP** — see `src/lib/fal/fal-model-pricing.ts`).
  */
 export async function POST(req: Request) {
   if (!process.env.FAL_KEY) {

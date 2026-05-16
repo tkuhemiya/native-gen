@@ -57,6 +57,7 @@ import {
 } from "@/lib/workflow/storage";
 import { zipRuntimeOutputs } from "@/lib/workflow/zip-outputs";
 import { normalizeWorkflowDocument } from "@/lib/workflow/migrate";
+import { estimateWorkflowFalUsd } from "@/lib/workflow/estimate-workflow-fal-usd";
 
 const nodeTypes = {
   mediaInput: MediaInputNode,
@@ -313,6 +314,27 @@ export function WorkflowEditor() {
     const parsed = workflowDocumentSchema.safeParse(doc);
     return parsed.success ? parsed.data : null;
   }, [workflowId, workflowName, nodes, edges]);
+
+  const falRunCostEstimate = useMemo(() => {
+    const snap = getAgentCanvasSnapshot();
+    if (!snap) return null;
+    return estimateWorkflowFalUsd(snap);
+  }, [getAgentCanvasSnapshot]);
+
+  const falEstimateTooltip = useMemo(() => {
+    if (!falRunCostEstimate) {
+      return "Validating the workflow…";
+    }
+    if (!falRunCostEstimate.ok) {
+      return falRunCostEstimate.error;
+    }
+    const { totalUsd, lineItems, disclaimer } = falRunCostEstimate;
+    const lines = lineItems.map(
+      (li) =>
+        `${li.label}: ${li.calls.map((c) => `${c.intent} $${c.usd.toFixed(2)}`).join(", ")}`,
+    );
+    return `Est. fal.ai cost (one successful run): ~$${totalUsd.toFixed(2)}\n\n${lines.join("\n")}\n\n${disclaimer}`;
+  }, [falRunCostEstimate]);
 
   useEffect(() => {
     if (!storageHydrated) return;
@@ -844,6 +866,21 @@ export function WorkflowEditor() {
           >
             Run workflow
           </button>
+          {falRunCostEstimate?.ok ? (
+            <span
+              className="max-w-[160px] truncate text-[10px] text-muted-foreground"
+              title={falEstimateTooltip}
+            >
+              Est. fal ~${falRunCostEstimate.totalUsd.toFixed(2)}
+            </span>
+          ) : falRunCostEstimate && !falRunCostEstimate.ok ? (
+            <span
+              className="max-w-[140px] truncate text-[10px] text-amber-600 dark:text-amber-500"
+              title={falEstimateTooltip}
+            >
+              Cost est. unavailable
+            </span>
+          ) : null}
           <button
             type="button"
             className="rounded-md border border-border bg-card px-3 py-1 text-xs font-medium text-card-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
@@ -984,7 +1021,28 @@ export function WorkflowEditor() {
       />
 
       <footer className="flex flex-wrap items-center gap-3 border-t border-border bg-card px-4 py-2 text-xs text-muted-foreground">
-        {status ? <span className="text-foreground">{status}</span> : <span>Idle</span>}
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
+          <span className="shrink-0 text-foreground">{status ?? "Idle"}</span>
+          {falRunCostEstimate?.ok ? (
+            <span
+              className="min-w-0 max-w-full shrink border-l border-border pl-3 font-medium text-foreground"
+              title={falEstimateTooltip}
+            >
+              Fal estimate · ~${falRunCostEstimate.totalUsd.toFixed(2)} per successful run
+            </span>
+          ) : falRunCostEstimate && !falRunCostEstimate.ok ? (
+            <span
+              className="min-w-0 shrink border-l border-border pl-3 text-amber-600 dark:text-amber-500"
+              title={falEstimateTooltip}
+            >
+              Fal estimate unavailable (fix graph wiring)
+            </span>
+          ) : (
+            <span className="border-l border-border pl-3 text-muted-foreground/80">
+              Fal estimate · — (invalid workflow document)
+            </span>
+          )}
+        </div>
         {lastOutputs ? (
           <span>
             Last run: {Object.keys(lastOutputs).length} node outputs

@@ -3,10 +3,8 @@ import { z } from "zod";
 /**
  * Fal text→image (workflow Flux node → POST `/api/fal/text-to-image`).
  *
- * Pricing (verify on fal): **FLUX.1 [schnell]** is billed about **$0.003/megapixel** on
- * https://fal.ai/models/fal-ai/flux/schnell — lower per MP than e.g. FLUX.2 Klein (~$0.009/MP) and
- * FLUX.2 [dev] (~$0.012/MP) per fal’s own comparison content. This app’s input shape matches Schnell;
- * other endpoints need a different payload.
+ * **Billing:** Flux.1 [schnell] is **$0.003 per megapixel** on
+ * https://fal.ai/models/fal-ai/flux/schnell — see `src/lib/fal/fal-model-pricing.ts` for estimates.
  */
 
 /** Default fal queue model for our text→image route (cheapest Flux text→image tier we support). */

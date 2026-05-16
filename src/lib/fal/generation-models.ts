@@ -1,4 +1,4 @@
-/** Defaults tuned for lowest-cost demos on fal (verify pricing on model pages). */
+/** Defaults: flux/schnell, veo3.1/lite, wan i2v — USD estimates in `fal-model-pricing.ts`. */
 
 export const DEFAULT_FAL_TEXT_TO_VIDEO_MODEL = "fal-ai/veo3.1/lite";
 export const DEFAULT_FAL_IMAGE_VIDEO_MODEL = "fal-ai/wan/v2.7/image-to-video";
