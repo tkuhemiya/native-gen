@@ -1,3 +1,4 @@
+import OpenAI, { APIError } from "openai";
 import { z } from "zod";
 
 import {
@@ -49,6 +50,9 @@ Typical 3-node pipeline x positions ~0, 320, 640. Use varied y only if multiple 
 
 Prefer including platformExport when the user names a destination (YouTube, Instagram, Facebook, TikTok).`;
 
+/** Default snapshot alias; override with OPENAI_WORKFLOW_MODEL. */
+const DEFAULT_WORKFLOW_MODEL = "gpt-5.4-mini";
+
 function parseJsonFromAssistantContent(raw: string): unknown {
   const trimmed = raw.trim();
   const fence = trimmed.match(/^```(?:json)?\s*([\s\S]*?)```$/);
@@ -97,41 +101,38 @@ export function workflowAgentLegacyUserContent(prompt: string): string {
 export async function generateWorkflowWithOpenAI(
   dialog: WorkflowAgentDialogTurn[],
 ): Promise<WorkflowDocument | null> {
-  const key = process.env.OPENAI_API_KEY;
-  if (!key?.trim()) return null;
+  const key = process.env.OPENAI_API_KEY?.trim();
+  if (!key) return null;
 
-  const model = process.env.OPENAI_WORKFLOW_MODEL?.trim() || "gpt-4o-mini";
+  const model = process.env.OPENAI_WORKFLOW_MODEL?.trim() || DEFAULT_WORKFLOW_MODEL;
 
   const trimmedDialog = compactDialog(dialog);
   if (trimmedDialog.length === 0) return null;
   const last = trimmedDialog[trimmedDialog.length - 1]!;
   if (last.role !== "user") return null;
 
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
+  const client = new OpenAI({ apiKey: key });
+
+  let content: string;
+  try {
+    const completion = await client.chat.completions.create({
       model,
-      response_format: { type: "json_object" },
       messages: [{ role: "system", content: SYSTEM }, ...trimmedDialog],
+      response_format: { type: "json_object" },
       temperature: 0.35,
-    }),
-  });
-
-  if (!res.ok) {
-    const t = await res.text();
-    throw new Error(`OpenAI error ${res.status}: ${t.slice(0, 280)}`);
-  }
-
-  const payload = (await res.json()) as {
-    choices?: { message?: { content?: string | null } }[];
-  };
-  const content = payload.choices?.[0]?.message?.content;
-  if (!content || typeof content !== "string") {
-    throw new Error("OpenAI returned no message content");
+    });
+    const raw = completion.choices[0]?.message?.content;
+    if (!raw || typeof raw !== "string") {
+      throw new Error("OpenAI returned no message content");
+    }
+    content = raw;
+  } catch (err) {
+    if (err instanceof APIError) {
+      const detail =
+        typeof err.message === "string" ? err.message : String(err).slice(0, 280);
+      throw new Error(`OpenAI error ${err.status ?? "?"}: ${detail}`);
+    }
+    throw err;
   }
 
   let parsed: unknown;

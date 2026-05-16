@@ -94,7 +94,7 @@ export function defaultNodeData(type: CanvasNodeType): NodeData {
         label: "Flux Schnell",
         suffix: ", high quality ad creative, clean composition",
         imageSize: "landscape_4_3",
-        numInferenceSteps: 4,
+        numInferenceSteps: 2,
       };
     case "platformExport":
       return {
