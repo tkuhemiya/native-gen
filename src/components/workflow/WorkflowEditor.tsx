@@ -676,7 +676,7 @@ export function WorkflowEditor() {
       <header className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3 text-sm">
         <div className="mr-auto flex min-w-[200px] flex-1 flex-col gap-1">
           <label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Campaign / workflow title
+            Editor
           </label>
           <input
             value={workflowName}

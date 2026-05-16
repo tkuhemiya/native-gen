@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 /**
  * Fal text→image (workflow Flux node → POST `/api/fal/text-to-image`).
  *
@@ -10,7 +12,41 @@
 /** Default fal queue model for our text→image route (cheapest Flux text→image tier we support). */
 export const DEFAULT_FAL_TEXT_TO_IMAGE_MODEL = "fal-ai/flux/schnell";
 
-export type FalFluxPresetSize = "square_hd" | "landscape_4_3" | "portrait_4_3";
+/**
+ * Named `image_size` values documented for fal-ai/flux/schnell (preset aspect ratios).
+ * Custom `{ width, height }` is also supported by fal but not wired in this UI yet.
+ */
+export const FAL_FLUX_IMAGE_SIZES = [
+  "landscape_16_9",
+  "portrait_16_9",
+  "square_hd",
+  "square",
+  "landscape_4_3",
+  "portrait_4_3",
+] as const;
+
+export type FalFluxPresetSize = (typeof FAL_FLUX_IMAGE_SIZES)[number];
+
+export const falFluxPresetSizeSchema = z.enum(FAL_FLUX_IMAGE_SIZES);
+
+/** Short dropdown labels — full pixel presets are fal defaults; hover the field for sizes. */
+export const FAL_FLUX_IMAGE_SIZE_LABELS = {
+  landscape_16_9: "16:9 landscape",
+  portrait_16_9: "9:16 portrait",
+  square_hd: "1:1 HD",
+  square: "1:1 (512²)",
+  landscape_4_3: "4:3 landscape",
+  portrait_4_3: "4:3 portrait",
+} as const satisfies Record<FalFluxPresetSize, string>;
+
+export const FAL_FLUX_IMAGE_SIZE_DIMENSIONS = {
+  landscape_16_9: "1024×576 px (fal preset)",
+  portrait_16_9: "576×1024 px (fal preset)",
+  square_hd: "1024×1024 px (fal preset)",
+  square: "512×512 px (fal preset)",
+  landscape_4_3: "1024×768 px (fal preset)",
+  portrait_4_3: "768×1024 px (fal preset)",
+} as const satisfies Record<FalFluxPresetSize, string>;
 
 export type FalFluxAcceleration = "none" | "regular" | "high";
 
@@ -45,10 +81,12 @@ export function getFalTextToImageEndpointId(): string {
   return process.env.FAL_TEXT_TO_IMAGE_MODEL?.trim() || DEFAULT_FAL_TEXT_TO_IMAGE_MODEL;
 }
 
-const ENDPOINT_SAFE = /^[a-z0-9][a-z0-9_-]*\/[a-z0-9][a-z0-9_.-]*$/i;
+/** Fal queue IDs are slash-separated (e.g. fal-ai/flux/schnell). Reject odd characters only. */
+const ENDPOINT_SAFE =
+  /^[a-z0-9][a-z0-9_-]*(?:\/[a-z0-9][a-z0-9_.-]*)+$/i;
 
 export function assertSafeFalEndpointId(endpointId: string): void {
-  if (!ENDPOINT_SAFE.test(endpointId)) {
+  if (!ENDPOINT_SAFE.test(endpointId.trim())) {
     throw new Error("FAL_TEXT_TO_IMAGE_MODEL looks invalid (namespace/endpoint)");
   }
 }

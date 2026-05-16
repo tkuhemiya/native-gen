@@ -1,4 +1,6 @@
 import { z } from "zod";
+
+import { falFluxPresetSizeSchema } from "@/lib/fal/text-to-image-config";
 import {
   WORKFLOW_DOCUMENT_VERSION,
   workflowDocumentSchema,
@@ -29,7 +31,7 @@ const v1NodeDataSchema = z.discriminatedUnion("kind", [
     kind: z.literal("falFluxSchnell"),
     label: z.string(),
     suffix: z.string(),
-    imageSize: z.enum(["square_hd", "landscape_4_3", "portrait_4_3"]),
+    imageSize: falFluxPresetSizeSchema,
     numInferenceSteps: z.number().min(1).max(12),
   }),
   z.object({

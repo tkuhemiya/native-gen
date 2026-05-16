@@ -33,7 +33,7 @@ mediaInput node:
 
 falFluxSchnell node:
   "type": "falFluxSchnell", "position": {"x": number, "y": number},
-  "data": { "kind": "falFluxSchnell", "label": string, "suffix": string (style appended to upstream text), "imageSize": "square_hd"|"landscape_4_3"|"portrait_4_3", "numInferenceSteps": 1-12 }
+  "data": { "kind": "falFluxSchnell", "label": string, "suffix": string (style appended to upstream text), "imageSize": "square_hd"|"square"|"landscape_16_9"|"landscape_4_3"|"portrait_16_9"|"portrait_4_3", "numInferenceSteps": 1-12 (diffusion denoising steps; higher can refine detail but is slower; Schnell is usually fine at 2-4) }
 
 platformExport node:
   "type": "platformExport", "position": {"x": number, "y": number},

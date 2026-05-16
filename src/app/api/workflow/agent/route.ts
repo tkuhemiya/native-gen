@@ -97,6 +97,6 @@ export async function POST(req: Request) {
   return NextResponse.json({
     workflow,
     source: "template" as const,
-    note: "Set OPENAI_API_KEY for natural-language layouts beyond the keyword template.",
+    note: "Optional: set OPENAI_API_KEY in .env.local (then restart `next dev`) so this chat can reason about free-form briefs instead of keyword templates.",
   });
 }

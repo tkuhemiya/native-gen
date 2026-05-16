@@ -7,15 +7,14 @@ import {
   buildFluxSchnellQueueInput,
   DEFAULT_FAL_TEXT_TO_IMAGE_MODEL,
   extractFalImagesUrl,
+  falFluxPresetSizeSchema,
   getFalTextToImageEndpointId,
   getFalTextToImageQueuePriority,
 } from "@/lib/fal/text-to-image-config";
 
 const bodySchema = z.object({
   prompt: z.string().min(1).max(2000),
-  imageSize: z
-    .enum(["square_hd", "landscape_4_3", "portrait_4_3"])
-    .default("landscape_4_3"),
+  imageSize: falFluxPresetSizeSchema.default("landscape_4_3"),
   numInferenceSteps: z.number().min(1).max(12).default(2),
 });
 
