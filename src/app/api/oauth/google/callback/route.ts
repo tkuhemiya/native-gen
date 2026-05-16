@@ -3,8 +3,7 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 import { oauthPublicBaseUrl } from "@/lib/oauth/base-url";
-import { loadSocialAccountsBlob, commitSocialAccountsBlob } from "@/lib/oauth/server-store";
-import { sealPayload } from "@/lib/oauth/crypto";
+import { oauthBridgeHtmlResponse } from "@/lib/oauth/oauth-bridge-html";
 import type { SocialAccountsBlob } from "@/lib/oauth/types";
 
 const CSRF_COOKIE = "ng_csrf_oauth_google";
@@ -43,12 +42,6 @@ export async function GET(request: NextRequest) {
   const expected = jar.get(CSRF_COOKIE)?.value;
   if (!code || !state || !expected || state !== expected) {
     return deny("google_invalid_state");
-  }
-
-  try {
-    sealPayload({});
-  } catch {
-    return deny("oauth_secret");
   }
 
   const clientId = process.env.GOOGLE_CLIENT_ID;
@@ -94,9 +87,7 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  const existing = await loadSocialAccountsBlob();
-  const next: SocialAccountsBlob = {
-    ...existing,
+  const partial: SocialAccountsBlob = {
     google: {
       refreshToken: tokenJson.refresh_token,
       scope: tokenJson.scope,
@@ -106,8 +97,11 @@ export async function GET(request: NextRequest) {
     },
   };
 
-  const res = NextResponse.redirect(`${base}/settings/connections?connected=google`);
+  const res = oauthBridgeHtmlResponse({
+    redirectBase: base,
+    partialBlob: partial,
+    connectedQuery: "google",
+  });
   res.cookies.set(CSRF_COOKIE, "", { httpOnly: true, path: "/", maxAge: 0 });
-  await commitSocialAccountsBlob(res, next);
   return res;
 }

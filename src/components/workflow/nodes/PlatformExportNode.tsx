@@ -11,6 +11,7 @@ import {
 } from "@/components/workflow/WorkflowRunContext";
 import type { AppNode } from "@/lib/workflow/app-node";
 import type { PublicAccountsStatus } from "@/lib/oauth/public-status";
+import { socialAccountsFetchHeaders } from "@/lib/oauth/social-fetch-headers";
 
 const PLATFORMS = [
   { id: "youtube", label: "YouTube" },
@@ -20,7 +21,10 @@ const PLATFORMS = [
 ] as const;
 
 async function fetchAccounts(): Promise<PublicAccountsStatus> {
-  const res = await fetch("/api/oauth/accounts", { cache: "no-store" });
+  const res = await fetch("/api/oauth/accounts", {
+    cache: "no-store",
+    headers: socialAccountsFetchHeaders(),
+  });
   if (!res.ok) throw new Error("Failed to load connections");
   return res.json();
 }

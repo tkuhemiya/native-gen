@@ -399,6 +399,13 @@ export function WorkflowAgentPanel({
                 ]);
                 break;
               case "tool_end":
+                if (!ev.ok) {
+                  console.error("[workflow-agent] Tool call failed", {
+                    toolName: ev.toolName,
+                    toolCallId: ev.toolCallId,
+                    summary: ev.summary,
+                  });
+                }
                 setStreamTools((prev) =>
                   prev.map((trow) =>
                     trow.toolCallId === ev.toolCallId

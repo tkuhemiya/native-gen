@@ -3,8 +3,7 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 import { oauthPublicBaseUrl } from "@/lib/oauth/base-url";
-import { loadSocialAccountsBlob, commitSocialAccountsBlob } from "@/lib/oauth/server-store";
-import { sealPayload } from "@/lib/oauth/crypto";
+import { oauthBridgeHtmlResponse } from "@/lib/oauth/oauth-bridge-html";
 import type { MetaPageStored, SocialAccountsBlob } from "@/lib/oauth/types";
 
 const CSRF_COOKIE = "ng_csrf_oauth_meta";
@@ -56,12 +55,6 @@ export async function GET(request: NextRequest) {
   const expected = jar.get(CSRF_COOKIE)?.value;
   if (!code || !state || !expected || state !== expected) {
     return deny("meta_invalid_state");
-  }
-
-  try {
-    sealPayload({});
-  } catch {
-    return deny("oauth_secret");
   }
 
   const appId = process.env.META_APP_ID;
@@ -129,9 +122,7 @@ export async function GET(request: NextRequest) {
     instagramUsername: p.instagram_business_account?.username,
   }));
 
-  const existing = await loadSocialAccountsBlob();
-  const next: SocialAccountsBlob = {
-    ...existing,
+  const partial: SocialAccountsBlob = {
     meta: {
       userId,
       userName: meJson.name,
@@ -142,8 +133,11 @@ export async function GET(request: NextRequest) {
     },
   };
 
-  const res = NextResponse.redirect(`${base}/settings/connections?connected=meta`);
+  const res = oauthBridgeHtmlResponse({
+    redirectBase: base,
+    partialBlob: partial,
+    connectedQuery: "meta",
+  });
   res.cookies.set(CSRF_COOKIE, "", { httpOnly: true, path: "/", maxAge: 0 });
-  await commitSocialAccountsBlob(res, next);
   return res;
 }
