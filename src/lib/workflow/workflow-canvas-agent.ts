@@ -1,4 +1,3 @@
-import { buildYoutubeLookRefThenVideoTemplate } from "./template-from-brief";
 import { assertConnectedDAG, GraphError } from "./graph";
 import {
   incomingMediaLanes,
@@ -10,6 +9,7 @@ import { normalizeWorkflowDocument } from "./migrate";
 import {
   WORKFLOW_DOCUMENT_VERSION,
   workflowDocumentSchema,
+  type MediaInputAsset,
   type WorkflowDocument,
   type WorkflowNode,
 } from "./schema";
@@ -31,41 +31,6 @@ export type WorkflowValidationFailure = {
   issues: string[];
 };
 
-/** Brief heuristics for YouTube look-ref template (mirrors workflow-agent). */
-export function briefSuggestsLookRefPipeline(brief: string): boolean {
-  const lower = brief.toLowerCase();
-  return (
-    /\b(movie|movies|film|films|short film|filmmak\w*|trailer|reels?|cinematic|footage)\b/.test(
-      lower,
-    ) ||
-    /\b(character|characters|protagonist|mascot|consistent|same (face|look|outfit))\b/.test(
-      lower,
-    ) ||
-    /\b(story|narrative|scene|plot|tell a story)\b/.test(lower)
-  );
-}
-
-function isSingleGenYoutubeVideoExport(doc: WorkflowDocument): boolean {
-  const gens = doc.nodes.filter((n) => n.data.kind === "generationBlock");
-  if (gens.length !== 1) return false;
-  const genId = gens[0]!.id;
-
-  const exportNodes = doc.nodes.filter((n) => n.data.kind === "platformExport");
-  if (exportNodes.length !== 1) return false;
-  const expNode = exportNodes[0]!;
-  if (expNode.data.kind !== "platformExport") return false;
-  if (expNode.data.platform !== "youtube") return false;
-
-  return doc.edges.some((e) => {
-    if (e.source !== genId || e.target !== expNode.id) return false;
-    const sh = e.sourceHandle ?? null;
-    const th = e.targetHandle ?? null;
-    if (sh === "video" && th === "video") return true;
-    if (sh === null && th === "video") return true;
-    return false;
-  });
-}
-
 /**
  * Snapshot for prompts / read_workflow: drop heavy data URLs so the model sees structure without multi-MB payloads.
  */
@@ -76,7 +41,7 @@ export function stripWorkflowMediaForAgent(doc: WorkflowDocument): WorkflowDocum
       if (n.data.kind !== "mediaInput") return n;
       return {
         ...n,
-        data: { ...n.data, images: [], videos: [] },
+        data: { ...n.data, images: [] },
       };
     }),
   };
@@ -93,15 +58,14 @@ export function mergePreservedMediaFromPrevious(
     if (n.data.kind !== "mediaInput") return n;
     const prev = prevById.get(n.id);
     if (!prev || prev.data.kind !== "mediaInput") return n;
-    const emptyNew = n.data.images.length === 0 && n.data.videos.length === 0;
-    const hadPrev = prev.data.images.length > 0 || prev.data.videos.length > 0;
+    const emptyNew = n.data.images.length === 0;
+    const hadPrev = prev.data.images.length > 0;
     if (emptyNew && hadPrev) {
       return {
         ...n,
         data: {
           ...n.data,
           images: prev.data.images,
-          videos: prev.data.videos,
         },
       };
     }
@@ -111,7 +75,44 @@ export function mergePreservedMediaFromPrevious(
 }
 
 /**
- * Parse model-written workflow JSON, validate graph + generation pins, merge preserved media, layout, optional YouTube template.
+ * Prepends images pasted/attached from the workflow chat onto the primary `mediaInput`
+ * (top-left-ish hub). Safe for empty arrays; skips non-image data URLs.
+ */
+export function mergeComposerImagesIntoPrimaryMediaInput(
+  doc: WorkflowDocument,
+  assets: MediaInputAsset[],
+): WorkflowDocument {
+  const safe = assets.filter(
+    (a) => typeof a.dataUrl === "string" && a.dataUrl.startsWith("data:image/"),
+  );
+  if (!safe.length) return doc;
+
+  const mediaNodes = doc.nodes.filter((n) => n.data.kind === "mediaInput");
+  if (!mediaNodes.length) return doc;
+
+  const primary = [...mediaNodes].sort((a, b) => {
+    const dy = a.position.y - b.position.y;
+    if (Math.abs(dy) > 24) return dy;
+    return a.position.x - b.position.x;
+  })[0]!;
+
+  const nodes = doc.nodes.map((n) => {
+    if (n.id !== primary.id || n.data.kind !== "mediaInput") return n;
+    const prepend = safe.map(({ dataUrl, fileName }) => ({ dataUrl, fileName }));
+    return {
+      ...n,
+      data: {
+        ...n.data,
+        images: [...prepend, ...n.data.images],
+      },
+    };
+  });
+
+  return { ...doc, nodes, updatedAt: new Date().toISOString() };
+}
+
+/**
+ * Parse model-written workflow JSON, validate graph + generation pins, merge preserved media, layout.
  */
 export function validateAndFinalizeWorkflowWrite(
   workflowJson: string,
@@ -180,9 +181,6 @@ export function validateAndFinalizeWorkflowWrite(
   }
 
   let out = doc;
-  if (isSingleGenYoutubeVideoExport(out) && briefSuggestsLookRefPipeline(ctx.brief)) {
-    out = buildYoutubeLookRefThenVideoTemplate(ctx.brief, "youtube");
-  }
 
   const laidOutNodes = layoutWorkflowNodesCompactDAG(out.nodes, out.edges);
   out = { ...out, nodes: laidOutNodes };

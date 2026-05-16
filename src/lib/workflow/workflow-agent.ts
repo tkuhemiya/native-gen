@@ -1,13 +1,15 @@
 import { createOpenAI } from "@ai-sdk/openai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
-import { streamText, tool } from "ai";
+import { streamText, tool, type ModelMessage } from "ai";
 import { z } from "zod";
 
 import {
   WORKFLOW_DOCUMENT_VERSION,
+  type MediaInputAsset,
   type WorkflowDocument,
 } from "./schema";
 import {
+  mergeComposerImagesIntoPrimaryMediaInput,
   stripWorkflowMediaForAgent,
   validateAndFinalizeWorkflowWrite,
 } from "./workflow-canvas-agent";
@@ -19,78 +21,45 @@ const workflowJsonInputSchema = z.object({
     .string()
     .min(4)
     .describe(
-      "Full WorkflowDocument JSON string: id, name, version, updatedAt, nodes[], edges[]. Must match app schema (v3).",
+      `Full WorkflowDocument JSON string: id, name, version (${WORKFLOW_DOCUMENT_VERSION}), updatedAt, nodes[], edges[]. Photo generation only.`,
     ),
 });
 
 const SYSTEM = `
-You are a **workflow editor**: you read the canvas as JSON and apply user intent by calling **write_workflow_canvas** with the updated document (like saving a file in an IDE). **Design like a parallel scene / dependency graph:** **many nodes** share a **short upstream bible** and **fan out** into masters and **per-scene** shots — **not** a mandatory **left-to-right** “first frame then second frame” line unless the user truly wants **one** clip.
+You are a **workflow editor** for **social stills**: read the canvas JSON and apply intent with **write_workflow_canvas**. The app runs **Flux text→image** and optional **Florence image→caption** only — **no video / motion pins exist**. Use **\`text\`** and **\`image\`** handles exclusively.
+
+**Parallel graphs:** many **generationBlocks** can share one **mediaInput** brief (\`text\` fan-out) for hooks, carousel frames, crops, or product variants — not a mandatory left-to-right chain unless the user wants one hero.
 
 ## WorkflowDocument shape
 - **Root:** \`id\` (uuid string), \`name\`, \`version\`: ${WORKFLOW_DOCUMENT_VERSION}, \`updatedAt\` (ISO-8601 string), \`nodes\`, \`edges\`
 - **Node:** \`id\`, \`type\` (\`mediaInput\` | \`generationBlock\` | \`platformExport\`), \`position\` { x, y }, \`data\` (must match type)
-  - **mediaInput** \`data\`: \`kind: "mediaInput"\`, \`label\`, \`value\` (brief text), \`images\`[], \`videos\`[] — use empty arrays unless you intentionally clear uploads
-  - **generationBlock** \`data\`: \`kind: "generationBlock"\`, \`label\` (short UI title), \`suffix\` (**long, concrete visual brief** for Flux/Veo/WAN — never slug-only; see “Diffusion & video prompts”), \`imageSize\` (e.g. \`landscape_16_9\`), \`numInferenceSteps\` (1–12), \`videoDuration\` (\`4s\`|\`6s\`|\`8s\`), \`videoResolution\`, \`videoSilent\`, \`wanDurationSec\`, \`wanResolution\`
-  - **platformExport** \`data\`: \`kind: "platformExport"\`, \`label\`, \`platform\` (\`youtube\`|\`facebook\`|\`instagram\`|\`tiktok\`), optional \`metaPageId\`
-- **Edge:** \`id\`, \`source\`, \`target\` (node ids), \`sourceHandle\`, \`targetHandle\` — \`"text"\`, \`"image"\`, or \`"video"\` (nullable handles allowed per schema). **Image-to-video:** still block **\`image\` out** → motion block **\`image\` in** (\`image\`↔\`image\`); optionally also wire **\`text\`↔\`text\`** for beat/motion prose.
+  - **mediaInput** \`data\`: \`kind: "mediaInput"\`, \`label\`, \`value\` (brief text), \`images\`[] — empty unless clearing uploads
+  - **generationBlock** \`data\`: \`kind: "generationBlock"\`, \`label\`, \`suffix\` (concrete visual brief for Flux — never slug-only), \`imageSize\` (preset id, e.g. \`landscape_16_9\`), \`numInferenceSteps\` (1–12; 2–4 is fast)
+  - **platformExport** \`data\`: \`kind: "platformExport"\`, \`label\`, \`platform\` (\`youtube\`|\`facebook\`|\`instagram\`|\`tiktok\`), optional \`metaPageId\` for Meta
+- **Edge:** \`id\`, \`source\`, \`target\`, \`sourceHandle\`, \`targetHandle\` — each is \`"text"\` or \`"image"\` (nullable handles allowed). **text→image** on a generation block = Flux. **image→text** = caption. **text→text** = copy pass-through.
 
 ## Graph rules (enforced on write)
-- Must be a **connected DAG** (no cycles, no disconnected nodes).
-- Every **generationBlock** needs **≥1 outgoing** edge (to another generation or to platformExport) matching outputs (text/image/video pins).
-- **Edits:** reuse existing **node ids** when the change is incremental and the same blocks still fit the intent — that keeps user uploads and run state tied to familiar blocks.
-- **Deliverable shift:** If the latest message or the snapshot suggests the user **changed their mind** about output (e.g. prose/copy-only → motion + lookdev stills, single hero → multi-character forked pipeline, stills-only → video shots, platform or format pivot), treat **write_workflow_canvas** as permission to **replace the whole graph** — new topology and **new node ids** when the old structure fights the new goal — rather than bolting patches onto a mismatched DAG. Keep existing **mediaInput** ids (with empty \`images\`/\`videos\` unless replacing uploads) only when those inputs still belong; drop or replace lanes that no longer apply.
+- **Connected DAG** (no cycles, no disconnected nodes).
+- Each **generationBlock** has **≥1 outgoing** edge matching its outputs (text and/or image).
+- Reuse **node ids** when editing incrementally so uploads/run state stay tied to the same blocks.
+- If the user **pivots** the deliverable, you may **replace the whole graph** (new ids when topology no longer fits).
 
-## Story & graph complexity (**strong default**)
-- **Parallel scene graph, not a linear script:** lay out **many generationBlocks side-by-side** fed by a **compact shared bible** (\`text\` fan-out). **Do not** treat the canvas as a mandatory **left-to-right timeline**, **screenplay page order**, or **one-node-after-another** pipeline. **Breadth** (forks from a hub) is the normal shape for shorts and campaigns; a **single narrow corridor** of nodes is **wrong** for “movie / film / short / trailer / reel about …” unless the user insists on **one** clip only.
-- **Thin prompts → invent, then graph:** if the user only names a **topic or setting** (e.g. *“Make a short movie about a hackathon”*, *“a trailer about …”*, *“a reel for our launch”*), you **must** **invent** a **small cast** (roles + distinct looks), **invent** **2+ places** (stage, breakout room, late-night desks, lobby…), and **invent scene beats** where **people meet places** (pitch, demo panic, team huddle, winner moment…). **Express each beat as its own** still and/or shot blocks that **pull** from those masters — **heavily prefer** this over a **single** generation block or a **linear** text→text→… chain because the brief was vague.
-- **Avoid** collapsing everything into the **tiny 3-node** pattern (mediaInput → **one** generationBlock → platformExport) unless the user **explicitly** wants a single asset, one hero shot, or “simplest / fastest / minimal” output.
-- For **stories, narratives, campaigns, arcs, scenes, beats, kids/families, multiple characters, \`# kids\`, each kid, multiple locations, carousels, or episodic** asks: design a **wide, readable DAG** with **many generationBlocks** — **parallel lanes** for subjects and sets, **scene / interaction** nodes that **merge** those primitives; a **short text hub** for bible/outline only, **not** a long sequential spine that pretends to be “the whole story in order.”
+## Marketing / photo defaults
+- Prefer **text→image** forks for feed creatives; **text→text** for caption/hook iterations; **image→text** when they need captions from a reference still.
+- Thin briefs → invent concrete art direction in each block’s **\`suffix\`** (subject, setting, palette, lighting, negatives like “no watermark”).
+- Avoid a single overloaded block when the brief implies **multiple distinct stills**.
 
-### Story primitives first (**how to think before you wire**)
-- **Decompose before you chain:** split the brief into **stable primitives** — **people/characters** (each look), **places/environments** (each master set), important **props/world rules** — then plan the graph from those atoms, not from a single melting **text→text→text** blob.
-- **Parallel masters, not prose ladders:** the default for anything visual is **one \`generationBlock\` per primitive still** (character plate, location plate, key object) as **text-to-image** forks from a compact bible/outline — **not** a staircase of **text-output** blocks “refining” the same story text.
-- **Merge only when they interact:** when primitives **share a frame** (conversation, crowd, chase, reunion), add **interaction** blocks — stills or shots whose **\`suffix\` explicitly describes the joint composition** (who is where, blocking, eyelines). Do **not** use long **text-only** chains as a substitute for **showing** the meet-up in image/video nodes.
-- **Anti-pattern (strong):** **three or more** \`generationBlock\`s in a row that **only output \`text\`** and only wire **text→text** is **wrong** for narrative, cinematic, campaign, or multi-subject visual work — unless the user **clearly** asked for **prose-only** output (script draft, blog, legal copy, caption deck) **with no** hero stills or motion. If you need story state, keep **≤2** text stages for bible/outline/beat notes, then **fork** into media lanes.
-
-### Creation verbs + artifact words (don’t assume prose-only)
-If the brief uses **make**, **create**, **generate**, **build**, or **produce** in the same thought as **file**, **video**, **clip**, **reel**, **film**, **footage**, **render**, **animation**, **GIF**, **thumbnail**, **carousel**, **poster**, **banner**, **visual**, **episode**, **export**, **shots**, or similar, the user often wants **media or a packaged asset**, **not** a long **text→text→…→export** graph whose only product is paragraphs. Unless they clearly ask for **written-only**, **script/doc**, **blog**, **caption-only**, or **copy-only**, bias toward **\`image\`** and/or **\`video\`** pins (outline/bible text upstream is fine).
-
-### Video / cinematic deliverables (**default graph shape**)
-When the user wants **video clips**, **film**, **short film**, **trailer**, **reels**, **cinematic motion**, **footage**, **MP4 output**, or similar:
-- **Do not** default to a long **text → text → … → text** “screenplay ladder” with **only the last block** wired to **video** (or one **text-only → video** synthesis for a whole story). That hides lookdev and fights consistent locations/characters.
-- **Do** use a **fork-and-merge DAG**: think **storyboard + unit shots** — **parallel** character/location masters, then **per-scene** stills/motion that **recombine** them — **not** “I must wire nodes strictly in story timeline order” and **not** a single left-to-right reading order on the canvas.
-- **Layers, not a queue:** the numbered list below is **what kinds of nodes to include**, **not** a mandatory **step-by-step** build order. **Many nodes should be siblings** fed by the same \`text\` hub.
-  1. **Bible / premise / show bible** — one or few blocks whose **outgoing \`text\`** **fans out** to many children (at most **1–2** compact text stages for cast+world notes — then **fork wide**, do **not** drag every scene through one linear text corridor).
-  2. **Parallel lookdev stills** — **one \`generationBlock\` per hero look, location master, or key environment** wired **\`text\` → \`text\`** in and **\`image\` → (next)** out. Each block **outputs only \`image\`** (text-to-image); **rich, distinct \`suffix\`** per lane.
-  3. **Motion / shots** — **per clip or per scene**, add a block that takes the matching still **\`image\` out** wired to this block **\`image\` in** (edges use pin name **sourceHandle**: image, **targetHandle**: image in JSON terms), **optionally \`text\` in** from the bible or a short beat for camera/motion, and **outputs \`video\`** (image-to-video / WAN path). **Motion prompt** goes in \`suffix\` + upstream text; keep it **short and kinetic** vs the still’s static description.
-  4. **platformExport** — wire **\`video\`** (and optional **\`image\`** for thumbnail). For **several clips in one exported video**, chain **\`video\` → \`video\`** continuation blocks **before** export; do not rely on wiring many parallel \`video\` pins into one export (only one upstream clip wins at bundle time).
-- **Text-to-video** (\`text\` in → \`video\` out, no \`image\` in) is fine for **simple one-off B-roll**, **single-shot promos**, or when the user explicitly asks to skip stills — **not** the default for multi-character / multi-location narratives.
-
-### Parallel stills & variants
-If the brief implies **counts**, **several people**, **per character**, **each location**, **variants**, or \`# kids\`: add **one generationBlock per subject or place** on the **text-to-image** forks; **distinct, concrete \`suffix\`** each; route each **\`image\`** into its own **\`image\`→\`video\`** shot block when video is required, then into **platformExport**. **Group or interaction beats** get their **own** blocks (do not overload a single text chain to “describe everyone together” while skipping stills).
-
-### Text chains (when to use)
-- **Sequential text → text → …** is for **copy iteration**, **pure prose beats**, or **no-visual** campaigns — **rare** as the main spine when the brief mentions **characters, sets, or motion**. For **story + media**, cap **text-only** depth at the **bible/outline** tier (see **Story primitives first**); **do not** build **text→text→text→export** pipelines as the default.
-
-- **Concrete targets:** (**a**) For narratives **with video**, aim for **≥5 generationBlocks** (often **8–15+**: bible + parallel stills + motion nodes); (**b**) for campaigns **without** motion, aim for **≥5** (often **6–12+**). More blocks are fine if the DAG stays readable.
-- Usually keep **one** \`platformExport\` at the end; merge parallel lanes into it unless the user names multiple distinct destinations.
-
-## Diffusion & video prompts (**mandatory for every generationBlock**)
-- **Lookdev (\`image\` output):** \`suffix\` describes a **static** master plate (set, wardrobe, geography, palette, extras/negatives) — prioritize **spatial and identity clarity** over motion jargon.
-- **Motion (\`video\` from \`image\` input):** \`suffix\` adds **movement, beats, lens behavior, pacing** atop the upstream still description; avoid contradicting fixed geography from the still unless intentional.
-- **Never** ship a **suffix** (or rely on upstream text) that is **only** an opaque codename: \`hero-kid-1\`, \`scene-A\`, \`variant_03\`, beat IDs, etc. Image/video models **cannot** infer characters from internal labels — they need **explicit visual description**.
-- Blocks that output **image** or **video** must combine upstream copy with a **suffix** that reads like **production direction**: subject(s) + age range + wardrobe + expression/pose, environment/set, action, camera/lens/lighting, color grade/mood, brand/ad tone, and short **negatives** when useful (“no watermark”, “no on-screen text”, “no extra fingers”).
-- **Labels** stay concise for the canvas UI; the **suffix** carries the heavy Fal-facing payload — longer suffixes are expected when campaigns need specificity.
-- When the user brief is thin, **infer specifics conservatively** (plausible wardrobe colors, setting, time of day) instead of leaving shorthand slugs — stay aligned with brand-safe, non-exploitative depictions.
+## Chat reference images
+When the user **attached images** in the sidebar chat, the **server merges** them into the primary **\`mediaInput\`** after a successful write. **Never** paste huge data URLs into \`workflowJson\`; keep \`images\`: [] in JSON and rely on merge + preserved-media rules.
 
 ## Media in snapshots
-The **Canvas snapshot** below strips **image/video binary data** from mediaInput nodes. If you omit or leave \`images\`/\`videos\` empty for a node id that already existed, the **server keeps** the user’s prior uploads for that id.
+Snapshots **strip** \`images\` data URLs. If you omit \`images\` for an existing mediaInput id, **prior uploads are preserved server-side**.
 
 ## Tools (only these)
-- **read_workflow_canvas** — returns current JSON (same as snapshot); optional refresh.
-- **write_workflow_canvas** — pass **workflowJson** (single string, entire document). **Required** to apply the graph.
+- **read_workflow_canvas** — optional JSON refresh (same as snapshot).
+- **write_workflow_canvas** — **full** \`workflowJson\` string.
 
-Call **write_workflow_canvas** with a full valid JSON graph. On failure it returns \`success: false\`, \`error\` (summary), and **\`issues\`** (per-line problems). Fix **every** issue and call **write_workflow_canvas** again.`;
+On validation failure: fix **all** issues, then call **write_workflow_canvas** again.`;
 
 const DEFAULT_MODEL = "gpt-5.4-mini" as const;
 
@@ -262,8 +231,47 @@ function compactDialog(dialog: WorkflowAgentDialogTurn[]): WorkflowAgentDialogTu
   return out.reverse();
 }
 
+const REPAIR_USER_PREFIX = "The workflow JSON did not validate";
+
+function buildPlannerMessages(
+  dialog: WorkflowAgentDialogTurn[],
+  composerAttachments: MediaInputAsset[] | undefined,
+): ModelMessage[] {
+  const imgs =
+    composerAttachments?.filter(
+      (a) => typeof a.dataUrl === "string" && a.dataUrl.startsWith("data:image/"),
+    ) ?? [];
+
+  let imageAnchorIndex = -1;
+  if (imgs.length > 0) {
+    for (let i = dialog.length - 1; i >= 0; i--) {
+      const t = dialog[i]!;
+      if (t.role !== "user") continue;
+      if (t.content.trimStart().startsWith(REPAIR_USER_PREFIX)) continue;
+      imageAnchorIndex = i;
+      break;
+    }
+  }
+
+  return dialog.map((t, i) => {
+    if (i === imageAnchorIndex && t.role === "user") {
+      const text =
+        t.content.trim() ||
+        "(User attached reference image(s); treat as Brief / posts visual reference — server copies pixels into the primary mediaInput.)";
+      return {
+        role: "user" as const,
+        content: [
+          { type: "text" as const, text },
+          ...imgs.map((img) => ({ type: "image" as const, image: img.dataUrl })),
+        ],
+      };
+    }
+    return { role: t.role, content: t.content };
+  });
+}
+
 export function workflowAgentLegacyUserContent(prompt: string): string {
-  return `Build a workflow for this campaign request:\n\n${prompt.trim().slice(0, 6000)}`;
+  return `Build a photo / still-image workflow (Flux generations + optional captions; no video):\n\n${prompt.trim().slice(0, 6000)}`;
 }
 
 export type WorkflowAgentGenerateResult = {
@@ -297,6 +305,8 @@ export type GenerateWorkflowOptions = {
   canvasSnapshot?: WorkflowDocument | null;
   /** Live reasoning / tool progress for NDJSON streaming clients. */
   streamSink?: (event: WorkflowAgentStreamEvent) => void;
+  /** Images pasted or picked in the sidebar composer — merged into primary mediaInput after a successful write. */
+  composerAttachments?: MediaInputAsset[];
 };
 
 export async function generateWorkflowWithOpenAI(
@@ -322,11 +332,15 @@ export async function generateWorkflowWithOpenAI(
   const briefForCompile = extractCampaignBriefFromDialog(workingDialog).trim() || "Campaign";
   const canvasSnapshot = options.canvasSnapshot ?? null;
   const streamSink = options.streamSink;
+  const composerAttachments =
+    options.composerAttachments?.filter(
+      (a) => typeof a.dataUrl === "string" && a.dataUrl.startsWith("data:image/"),
+    ) ?? [];
 
   const snapshotForPrompt = canvasSnapshot ? stripWorkflowMediaForAgent(canvasSnapshot) : null;
   const canvasBlock = snapshotForPrompt
     ? `\n\n## Canvas snapshot (media binary stripped; empty arrays here still restore prior uploads per node id on save)\n\`\`\`json\n${JSON.stringify(snapshotForPrompt, null, 2)}\n\`\`\``
-    : `\n\n## Canvas snapshot\n_(empty — new WorkflowDocument: **parallel scene graph** for anything like a **short / movie / trailer / reel** (e.g. *hackathon*): **invent** cast + **2+ places** + **scene beats**, **fork** \`text\`→many **image** masters, then **per-scene** \`image\`→\`video\`; **do not** lay out as one skinny left-to-right line. **Primitives first**; **never** long **text→text→text** spines. **One** \`mediaInput\`, compact bible hub, parallel lanes, optional **video→video** stitch, **one** \`platformExport\`; version ${WORKFLOW_DOCUMENT_VERSION}; fresh uuids.)_`;
+    : `\n\n## Canvas snapshot\n_(empty — design a **photo workflow**: one \`mediaInput\` hub, **parallel** \`text\`→\`image\` generationBlocks for variants/carousel frames, optional \`text\` chains for copy, **one** \`platformExport\`; schema version ${WORKFLOW_DOCUMENT_VERSION}; fresh uuids.)_`;
 
   const agentLog: string[] = [];
   const pushLog = (line: string) => {
@@ -371,7 +385,7 @@ export async function generateWorkflowWithOpenAI(
 
     const writeWorkflowCanvasTool = tool({
       description:
-        "Apply the full WorkflowDocument JSON in workflowJson — always the **entire** document. If the user pivoted deliverable vs the current canvas (e.g. copy-only → video + lookdev, new platform), rewrite the whole graph (new topology or node ids when needed) instead of patching a mismatched DAG; keep mediaInput ids only when uploads still apply. For thin cinematic prompts, **invent** cast + places + scene beats and **graph** them **in parallel** (fork/merge), **not** a linear spine. **Story primitives first:** parallel text→image masters, interaction blocks in-frame; **strongly avoid** long text→text→text chains for narrative/visual briefs (prose-only is the exception). For motion, prefer parallel lookdev forks then image→video shot blocks (\`image\` pin ↔ \`image\` pin). Do not collapse to minimal single-generate graphs unless the user asked.",
+        "Apply the full WorkflowDocument JSON (photo/stills only). Rewrite the whole DAG when the user pivots platform or creative scope; reuse mediaInput ids when uploads still apply. Prefer parallel **text→image** forks for variants; use **text→text** for copy iteration and **image→text** for captions. Do not collapse to a single generation block unless they ask for one asset.",
       inputSchema: workflowJsonInputSchema,
       execute: async ({ workflowJson }) => {
         totalWriteAttempts += 1;
@@ -399,10 +413,7 @@ export async function generateWorkflowWithOpenAI(
     const streamResult = streamText({
       model: openai(modelId),
       system: SYSTEM + canvasBlock,
-      messages: workingDialog.map((t) => ({
-        role: t.role,
-        content: t.content,
-      })),
+      messages: buildPlannerMessages(workingDialog, composerAttachments),
       tools: {
         read_workflow_canvas: readWorkflowCanvasTool,
         write_workflow_canvas: writeWorkflowCanvasTool,
@@ -534,8 +545,12 @@ export async function generateWorkflowWithOpenAI(
     (outerRepairPasses > 0 || maxInnerStepsUsed > 1 || totalWriteAttempts > 1);
 
   if (resolvedWorkflow) {
+    const workflowOut =
+      composerAttachments.length > 0
+        ? mergeComposerImagesIntoPrimaryMediaInput(resolvedWorkflow, composerAttachments)
+        : resolvedWorkflow;
     return {
-      workflow: resolvedWorkflow,
+      workflow: workflowOut,
       validationRepaired: validationRepaired || undefined,
       agentLog,
     };

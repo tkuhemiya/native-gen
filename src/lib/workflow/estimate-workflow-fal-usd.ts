@@ -2,8 +2,6 @@ import {
   FAL_FLORENCE_CAPTION_ESTIMATE_USD,
   FAL_PRICING_DISCLAIMER,
   falFluxSchnellImageUsd,
-  falVeo31LiteRunUsd,
-  falWan27RunUsd,
 } from "@/lib/fal/fal-model-pricing";
 import { assertConnectedDAG, GraphError } from "./graph";
 import {
@@ -81,35 +79,6 @@ export function estimateWorkflowFalUsd(doc: WorkflowDocument): EstimateWorkflowF
         intent: "text-to-image",
         usd,
         detail: `fal-ai/flux/schnell · ${node.data.imageSize} · $0.003/MP`,
-      });
-    }
-    if (plan.needTextToVideo) {
-      const usd = falVeo31LiteRunUsd({
-        duration: node.data.videoDuration,
-        resolution: node.data.videoResolution,
-        videoSilent: node.data.videoSilent,
-      });
-      const audio = node.data.videoSilent ? "silent" : "with audio";
-      calls.push({
-        intent: "text-to-video",
-        usd,
-        detail: `fal-ai/veo3.1/lite · ${node.data.videoDuration} · ${node.data.videoResolution} · ${audio}`,
-      });
-    }
-    if (plan.needImageToVideo) {
-      const usd = falWan27RunUsd(node.data.wanDurationSec, node.data.wanResolution);
-      calls.push({
-        intent: "image-to-video",
-        usd,
-        detail: `fal-ai/wan/v2.7/image-to-video · ${node.data.wanDurationSec}s · ${node.data.wanResolution}`,
-      });
-    }
-    if (plan.needVideoToVideo) {
-      const usd = falWan27RunUsd(node.data.wanDurationSec, node.data.wanResolution);
-      calls.push({
-        intent: "video-to-video",
-        usd,
-        detail: `fal-ai/wan/v2.7/image-to-video · ${node.data.wanDurationSec}s · ${node.data.wanResolution} (video in)`,
       });
     }
 

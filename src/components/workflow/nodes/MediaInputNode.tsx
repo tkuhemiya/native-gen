@@ -37,20 +37,6 @@ export function MediaInputNode(props: NodeProps<AppNode>) {
     [getNode, id, updateNodeData],
   );
 
-  const appendVideoFile = useCallback(
-    async (file: File) => {
-      const dataUrl = await readFileAsDataUrl(file);
-      const node = getNode(id) as AppNode | undefined;
-      if (!node || node.data.kind !== "mediaInput") return;
-      const next: MediaInputAsset = { dataUrl, fileName: file.name };
-      updateNodeData(id, {
-        ...node.data,
-        videos: [...node.data.videos, next],
-      });
-    },
-    [getNode, id, updateNodeData],
-  );
-
   const removeImageAt = useCallback(
     (index: number) => {
       const node = getNode(id) as AppNode | undefined;
@@ -63,27 +49,14 @@ export function MediaInputNode(props: NodeProps<AppNode>) {
     [getNode, id, updateNodeData],
   );
 
-  const removeVideoAt = useCallback(
-    (index: number) => {
-      const node = getNode(id) as AppNode | undefined;
-      if (!node || node.data.kind !== "mediaInput") return;
-      updateNodeData(id, {
-        ...node.data,
-        videos: node.data.videos.filter((_, i) => i !== index),
-      });
-    },
-    [getNode, id, updateNodeData],
-  );
-
   const handleFileList = useCallback(
     async (files: FileList | File[] | null | undefined) => {
       if (!files?.length) return;
       for (const file of Array.from(files)) {
         if (file.type.startsWith("image/")) await appendImageFile(file);
-        else if (file.type.startsWith("video/")) await appendVideoFile(file);
       }
     },
-    [appendImageFile, appendVideoFile],
+    [appendImageFile],
   );
 
   const onPasteCapture = useCallback(
@@ -91,37 +64,30 @@ export function MediaInputNode(props: NodeProps<AppNode>) {
       const dt = e.clipboardData;
       if (!dt) return;
 
-      const mediaFiles: File[] = [];
+      const imageFiles: File[] = [];
       for (const item of Array.from(dt.items)) {
         if (item.kind !== "file") continue;
         const file = item.getAsFile();
-        if (!file) continue;
-        if (file.type.startsWith("image/") || file.type.startsWith("video/")) {
-          mediaFiles.push(file);
-        }
+        if (!file || !file.type.startsWith("image/")) continue;
+        imageFiles.push(file);
       }
-      if (mediaFiles.length === 0 && dt.files?.length) {
+      if (imageFiles.length === 0 && dt.files?.length) {
         for (const file of Array.from(dt.files)) {
-          if (file.type.startsWith("image/") || file.type.startsWith("video/")) {
-            mediaFiles.push(file);
-          }
+          if (file.type.startsWith("image/")) imageFiles.push(file);
         }
       }
-      if (mediaFiles.length === 0) return;
+      if (imageFiles.length === 0) return;
 
       e.preventDefault();
       e.stopPropagation();
-      for (const file of mediaFiles) {
-        if (file.type.startsWith("image/")) await appendImageFile(file);
-        else if (file.type.startsWith("video/")) await appendVideoFile(file);
-      }
+      for (const file of imageFiles) await appendImageFile(file);
     },
-    [appendImageFile, appendVideoFile],
+    [appendImageFile],
   );
 
   if (data.kind !== "mediaInput") return null;
 
-  const hasMedia = data.images.length > 0 || data.videos.length > 0;
+  const hasMedia = data.images.length > 0;
 
   return (
     <div
@@ -141,15 +107,8 @@ export function MediaInputNode(props: NodeProps<AppNode>) {
         type="source"
         position={Position.Right}
         id="image"
-        style={{ top: "50%" }}
-        className="nodrag nopan z-10 !h-3 !w-3 !-translate-y-1/2 !border-2 !border-card !bg-sky-500"
-      />
-      <Handle
-        type="source"
-        position={Position.Right}
-        id="video"
         style={{ top: "calc(100% - 20px)" }}
-        className="nodrag nopan z-10 !h-3 !w-3 !-translate-y-1/2 !border-2 !border-card !bg-amber-500"
+        className="nodrag nopan z-10 !h-3 !w-3 !-translate-y-1/2 !border-2 !border-card !bg-sky-500"
       />
       <div className="flex cursor-grab select-none items-center justify-center rounded-t-lg border-b border-border px-2 py-1.5 active:cursor-grabbing">
         <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -160,8 +119,6 @@ export function MediaInputNode(props: NodeProps<AppNode>) {
         <span className="font-medium text-emerald-600 dark:text-emerald-400">Text</span>
         {" · "}
         <span className="font-medium text-sky-600 dark:text-sky-400">Image</span>
-        {" · "}
-        <span className="font-medium text-amber-600 dark:text-amber-400">Video</span>
         {" — right pins"}
       </p>
       <div className="px-3 pt-2">
@@ -217,7 +174,7 @@ export function MediaInputNode(props: NodeProps<AppNode>) {
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*,video/*"
+          accept="image/*"
           multiple
           className="hidden"
           onChange={(e) => {
@@ -255,37 +212,12 @@ export function MediaInputNode(props: NodeProps<AppNode>) {
                 />
               </div>
             ))}
-            {data.videos.map((asset, i) => (
-              <div
-                key={`vid-${i}-${asset.dataUrl.slice(0, 24)}`}
-                className="group relative overflow-hidden rounded-md border border-border"
-              >
-                <button
-                  type="button"
-                  className="absolute right-1 top-1 z-10 flex h-6 w-6 items-center justify-center rounded border border-border bg-card/95 text-xs text-card-foreground opacity-90 shadow-sm hover:opacity-100"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    removeVideoAt(i);
-                  }}
-                  aria-label="Remove video"
-                >
-                  ×
-                </button>
-                <video
-                  className="max-h-24 w-full object-cover"
-                  src={asset.dataUrl}
-                  controls
-                  muted
-                  onClick={(e) => e.stopPropagation()}
-                />
-              </div>
-            ))}
           </div>
         ) : null}
 
         {!hasMedia ? (
           <p className="select-none text-center text-[11px] leading-relaxed text-muted-foreground">
-            Drop images or videos
+            Drop reference images
             <br />
             <span className="text-muted-foreground/80">or paste · click to browse</span>
           </p>

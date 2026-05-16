@@ -19,9 +19,9 @@ const fontFiraMono = Fira_Code({
 });
 
 export const metadata: Metadata = {
-  title: "Native Gen · Campaign workflow lab",
+  title: "Native Gen · Marketing posts workflow",
   description:
-    "DAG-style creative workflows with Fal-powered generations, local saves, and social export packs.",
+    "Plan social posts as a DAG: AI-assisted copy and image creatives, optional motion when you need it, local saves, and export packs.",
 };
 
 export default function RootLayout({

@@ -4,11 +4,17 @@ import { z } from "zod";
 import { buildTemplateWorkflowDocument } from "@/lib/workflow/template-from-brief";
 import { workflowDocumentSchema } from "@/lib/workflow/schema";
 import type { WorkflowDocument } from "@/lib/workflow/schema";
+import { mergeComposerImagesIntoPrimaryMediaInput } from "@/lib/workflow/workflow-canvas-agent";
 import {
   generateWorkflowWithOpenAI,
   workflowAgentLegacyUserContent,
   type WorkflowAgentDialogTurn,
 } from "@/lib/workflow/workflow-agent";
+
+const composerImageSchema = z.object({
+  dataUrl: z.string().max(12 * 1024 * 1024),
+  fileName: z.string().max(512).optional(),
+});
 
 const messageSchema = z.object({
   role: z.enum(["user", "assistant"]),
@@ -19,6 +25,8 @@ const bodySchema = z
   .object({
     prompt: z.string().min(1).max(6000).optional(),
     messages: z.array(messageSchema).min(1).max(30).optional(),
+    /** Images from the sidebar composer — merged into primary mediaInput after workflow apply. */
+    composerImages: z.array(composerImageSchema).max(8).optional(),
     /** Current canvas so the agent can read/edit incrementally (full WorkflowDocument v3). */
     workflow: z.unknown().optional(),
     /** When true (OpenAI path only), respond with NDJSON stream + final `result` line. */
@@ -97,6 +105,7 @@ export async function POST(req: Request) {
           const result = await generateWorkflowWithOpenAI(dialog, {
             canvasSnapshot,
             streamSink: send,
+            composerAttachments: parsed.data.composerImages,
           });
           send({
             type: "result",
@@ -124,7 +133,10 @@ export async function POST(req: Request) {
   if (hasOpenAI) {
     let plannerAgentLog: string[] | undefined;
     try {
-      const result = await generateWorkflowWithOpenAI(dialog, { canvasSnapshot });
+      const result = await generateWorkflowWithOpenAI(dialog, {
+        canvasSnapshot,
+        composerAttachments: parsed.data.composerImages,
+      });
       plannerAgentLog = result.agentLog;
       if (result.workflow) {
         return NextResponse.json({
@@ -152,7 +164,8 @@ export async function POST(req: Request) {
     }
   }
 
-  const workflow = buildTemplateWorkflowDocument(templateBrief);
+  let workflow = buildTemplateWorkflowDocument(templateBrief);
+  workflow = mergeComposerImagesIntoPrimaryMediaInput(workflow, parsed.data.composerImages ?? []);
   return NextResponse.json({
     workflow,
     source: "template" as const,

@@ -2,7 +2,7 @@ import JSZip from "jszip";
 
 import type { RuntimeOutputs } from "@/lib/workflow/runner";
 
-/** Build a downloadable ZIP of images, videos, bundle files, and copy from a run. */
+/** Build a downloadable ZIP of images, bundle files, and copy from a run. */
 export async function zipRuntimeOutputs(
   outputs: RuntimeOutputs,
   baseName: string,
@@ -27,15 +27,6 @@ export async function zipRuntimeOutputs(
       } catch {
         /* CORS or network — skip */
       }
-    } else if (out.type === "video") {
-      try {
-        const res = await fetch(out.url);
-        if (res.ok) {
-          addBlob(`${prefix}-video.mp4`, await res.blob());
-        }
-      } catch {
-        /* skip */
-      }
     } else if (out.type === "generation") {
       if (out.text?.trim()) {
         addBlob(
@@ -50,16 +41,6 @@ export async function zipRuntimeOutputs(
             const ext =
               res.headers.get("content-type")?.includes("png") ? "png" : "jpg";
             addBlob(`${prefix}-generated.${ext}`, await res.blob());
-          }
-        } catch {
-          /* skip */
-        }
-      }
-      if (out.videoUrl) {
-        try {
-          const res = await fetch(out.videoUrl);
-          if (res.ok) {
-            addBlob(`${prefix}-generated-video.mp4`, await res.blob());
           }
         } catch {
           /* skip */
@@ -83,18 +64,6 @@ export async function zipRuntimeOutputs(
           /* skip */
         }
         i++;
-      }
-      let v = 0;
-      for (const u of out.videoUrls) {
-        try {
-          const r = await fetch(u);
-          if (r.ok) {
-            addBlob(`${prefix}-input-video-${v}.bin`, await r.blob());
-          }
-        } catch {
-          /* skip */
-        }
-        v++;
       }
     } else if (out.type === "bundle") {
       for (const f of out.files) {

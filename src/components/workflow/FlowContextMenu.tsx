@@ -14,7 +14,6 @@ type FlowContextMenuPortalProps = {
   onAddBlock: (type: CanvasNodeType) => void;
   onDuplicateNode: (nodeId: string) => void;
   onDeleteNode: (nodeId: string) => void;
-  onStarterWorkflow: () => void;
   onExportJson: () => void;
   onTriggerImport: () => void;
 };
@@ -25,7 +24,6 @@ export function FlowContextMenuPortal({
   onAddBlock,
   onDuplicateNode,
   onDeleteNode,
-  onStarterWorkflow,
   onExportJson,
   onTriggerImport,
 }: FlowContextMenuPortalProps) {
@@ -33,7 +31,7 @@ export function FlowContextMenuPortal({
 
   const pad = 8;
   const estW = 220;
-  const estH = menu.kind === "pane" ? 420 : 120;
+  const estH = menu.kind === "pane" ? 360 : 120;
   const left = Math.max(
     pad,
     Math.min(menu.clientX, window.innerWidth - estW - pad),
@@ -64,7 +62,7 @@ export function FlowContextMenuPortal({
             className={itemCls}
             onClick={() => onAddBlock("mediaInput")}
           >
-            Campaign input
+            Brief / posts
           </button>
           <p className={labelCls}>Generation</p>
           <button
@@ -83,15 +81,6 @@ export function FlowContextMenuPortal({
             onClick={() => onAddBlock("platformExport")}
           >
             Platform export
-          </button>
-          <p className={labelCls}>Quick start</p>
-          <button
-            type="button"
-            role="menuitem"
-            className={itemCls}
-            onClick={() => onStarterWorkflow()}
-          >
-            Insert Text → Image starter
           </button>
           <p className={labelCls}>File</p>
           <button type="button" role="menuitem" className={itemCls} onClick={() => onExportJson()}>

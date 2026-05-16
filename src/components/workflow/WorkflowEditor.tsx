@@ -95,7 +95,7 @@ type FlowContextMenuState =
   | { kind: "node"; clientX: number; clientY: number; nodeId: string };
 
 export function WorkflowEditor() {
-  const [workflowName, setWorkflowName] = useState("Untitled campaign");
+  const [workflowName, setWorkflowName] = useState("Untitled posts pack");
   const [workflowId, setWorkflowId] = useState(() => crypto.randomUUID());
   const [nodes, setNodes, onNodesChange] = useNodesState<AppNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -330,7 +330,7 @@ export function WorkflowEditor() {
       setLiveOutputs(restored);
       setRunPhase("done");
       setStatus(
-        "Restored last run media from IndexedDB (images/video blobs). localStorage keeps a small text snapshot only.",
+        "Restored last run media from IndexedDB (image blobs). localStorage keeps a small text snapshot only.",
       );
     })();
     return () => {
@@ -471,55 +471,10 @@ export function WorkflowEditor() {
     [getNode],
   );
 
-  const starterWorkflow = () => {
-    const textId = crypto.randomUUID();
-    const fluxId = crypto.randomUUID();
-    const nextId = crypto.randomUUID();
-    setWorkflowName("Starter · Text → image");
-    setWorkflowId(nextId);
-    setLastLoadedWorkflowId(nextId);
-    setNodes([
-      {
-        id: textId,
-        type: "mediaInput",
-        position: { x: 0, y: 0 },
-        data: {
-          kind: "mediaInput",
-          label: "Campaign input",
-          value:
-            "Minimaliste beverage pour with condensation, studio lighting",
-          images: [],
-          videos: [],
-        },
-      },
-      {
-        id: fluxId,
-        type: "generationBlock",
-        position: { x: 320, y: 0 },
-        data: defaultNodeData("generationBlock"),
-      },
-    ]);
-    setEdges([
-      {
-        id: `e-${textId}-${fluxId}`,
-        source: textId,
-        target: fluxId,
-        sourceHandle: "text",
-        targetHandle: "text",
-        animated: true,
-      },
-    ]);
-    setLastOutputs(null);
-    setLiveOutputs(null);
-    setRunPhase("idle");
-    setActiveNodeId(null);
-    setStatus("Inserted starter nodes");
-  };
-
   const createBlankWorkflow = () => {
     restoredMediaForWorkflowRef.current = null;
     const nextId = crypto.randomUUID();
-    setWorkflowName("Untitled campaign");
+    setWorkflowName("Untitled posts pack");
     setWorkflowId(nextId);
     setLastLoadedWorkflowId(nextId);
     setNodes([]);
@@ -672,7 +627,7 @@ export function WorkflowEditor() {
         <div className="flex flex-wrap items-end gap-3">
           <div className="flex min-w-0 flex-1 flex-col gap-1 sm:min-w-[12rem]">
             <label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Editor
+              Posts workflow
             </label>
             <input
               value={workflowName}
@@ -706,7 +661,7 @@ export function WorkflowEditor() {
                 </select>
                 <button
                   type="button"
-                  title="New campaign"
+                  title="New posts pack"
                   className="shrink-0 rounded-md border border-border bg-card px-2 py-1 text-sm font-semibold leading-none text-card-foreground hover:bg-accent"
                   onClick={createBlankWorkflow}
                 >
@@ -883,10 +838,6 @@ export function WorkflowEditor() {
       onAddBlock={addBlockAtCursor}
       onDuplicateNode={duplicateContextNode}
       onDeleteNode={deleteContextNode}
-      onStarterWorkflow={() => {
-        starterWorkflow();
-        closeContextMenu();
-      }}
       onExportJson={() => {
         exportJson();
         closeContextMenu();
