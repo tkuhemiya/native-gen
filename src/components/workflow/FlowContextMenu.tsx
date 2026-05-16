@@ -14,6 +14,9 @@ type FlowContextMenuPortalProps = {
   onAddBlock: (type: CanvasNodeType) => void;
   onDuplicateNode: (nodeId: string) => void;
   onDeleteNode: (nodeId: string) => void;
+  onStarterWorkflow: () => void;
+  onExportJson: () => void;
+  onTriggerImport: () => void;
 };
 
 export function FlowContextMenuPortal({
@@ -22,12 +25,15 @@ export function FlowContextMenuPortal({
   onAddBlock,
   onDuplicateNode,
   onDeleteNode,
+  onStarterWorkflow,
+  onExportJson,
+  onTriggerImport,
 }: FlowContextMenuPortalProps) {
   if (!menu) return null;
 
   const pad = 8;
   const estW = 220;
-  const estH = menu.kind === "pane" ? 240 : 120;
+  const estH = menu.kind === "pane" ? 420 : 120;
   const left = Math.max(
     pad,
     Math.min(menu.clientX, window.innerWidth - estW - pad),
@@ -77,6 +83,27 @@ export function FlowContextMenuPortal({
             onClick={() => onAddBlock("platformExport")}
           >
             Platform export
+          </button>
+          <p className={labelCls}>Quick start</p>
+          <button
+            type="button"
+            role="menuitem"
+            className={itemCls}
+            onClick={() => onStarterWorkflow()}
+          >
+            Insert Text → Flux graph
+          </button>
+          <p className={labelCls}>File</p>
+          <button type="button" role="menuitem" className={itemCls} onClick={() => onExportJson()}>
+            Export JSON
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className={itemCls}
+            onClick={() => onTriggerImport()}
+          >
+            Import JSON
           </button>
         </>
       ) : (

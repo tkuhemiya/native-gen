@@ -24,6 +24,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as R
 
 import { ThemeToggle } from "@/components/theme-toggle";
 import { FlowContextMenuPortal } from "@/components/workflow/FlowContextMenu";
+import { WorkflowAgentPanel } from "@/components/workflow/WorkflowAgentPanel";
 import { FalFluxSchnellNode } from "@/components/workflow/nodes/FalFluxSchnellNode";
 import { MediaInputNode } from "@/components/workflow/nodes/MediaInputNode";
 import { PlatformExportNode } from "@/components/workflow/nodes/PlatformExportNode";
@@ -141,7 +142,6 @@ export function WorkflowEditor() {
     );
   }, [youtubePublishCandidates]);
 
-  const [suggestBrief, setSuggestBrief] = useState("");
   const importRef = useRef<HTMLInputElement>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
   const paneFlowAnchorRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -170,6 +170,35 @@ export function WorkflowEditor() {
   const refreshLibrary = useCallback(async () => {
     setLibrary(await listWorkflowDocs());
   }, []);
+
+  const applyWorkflowDocument = useCallback(
+    async (doc: WorkflowDocument) => {
+      setWorkflowId(doc.id);
+      setWorkflowName(doc.name);
+      setNodes(
+        doc.nodes.map((n) => ({
+          id: n.id,
+          type: n.type,
+          position: n.position,
+          data: n.data,
+        })),
+      );
+      setEdges(
+        doc.edges.map((e) => ({
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          sourceHandle: e.sourceHandle ?? undefined,
+          targetHandle: e.targetHandle ?? undefined,
+          animated: true,
+        })),
+      );
+      setLastOutputs(null);
+      await saveWorkflowDoc(doc);
+      await refreshLibrary();
+    },
+    [refreshLibrary, setEdges, setNodes],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -323,20 +352,6 @@ export function WorkflowEditor() {
     [setEdges],
   );
 
-  const addBlock = (type: CanvasNodeType) => {
-    const id = crypto.randomUUID();
-    const data = defaultNodeData(type);
-    setNodes((nds) => [
-      ...nds,
-      {
-        id,
-        type,
-        position: { x: 40 + nds.length * 28, y: 40 + nds.length * 24 },
-        data,
-      },
-    ]);
-  };
-
   const starterWorkflow = () => {
     const textId = crypto.randomUUID();
     const fluxId = crypto.randomUUID();
@@ -413,30 +428,8 @@ export function WorkflowEditor() {
         setStatus("Import failed — file is not a valid workflow");
         return;
       }
-      setWorkflowId(doc.id);
-      setWorkflowName(doc.name);
-      setNodes(
-        doc.nodes.map((n) => ({
-          id: n.id,
-          type: n.type,
-          position: n.position,
-          data: n.data,
-        })),
-      );
-      setEdges(
-        doc.edges.map((e) => ({
-          id: e.id,
-          source: e.source,
-          target: e.target,
-          sourceHandle: e.sourceHandle ?? undefined,
-          targetHandle: e.targetHandle ?? undefined,
-          animated: true,
-        })),
-      );
-      setLastOutputs(null);
+      await applyWorkflowDocument(doc);
       setStatus("Imported workflow");
-      await saveWorkflowDoc(doc);
-      await refreshLibrary();
     } catch {
       setStatus("Import failed — invalid JSON");
     }
@@ -449,80 +442,8 @@ export function WorkflowEditor() {
       setStatus("Workflow missing from storage");
       return;
     }
-    setWorkflowId(doc.id);
-    setWorkflowName(doc.name);
-    setNodes(
-      doc.nodes.map((n) => ({
-        id: n.id,
-        type: n.type,
-        position: n.position,
-        data: n.data,
-      })),
-    );
-    setEdges(
-      doc.edges.map((e) => ({
-        id: e.id,
-        source: e.source,
-        target: e.target,
-        sourceHandle: e.sourceHandle ?? undefined,
-        targetHandle: e.targetHandle ?? undefined,
-        animated: true,
-      })),
-    );
-    setLastOutputs(null);
+    await applyWorkflowDocument(doc);
     setStatus(`Loaded “${doc.name}”`);
-  };
-
-  const suggestFromServer = async () => {
-    const brief = suggestBrief.trim();
-    if (!brief) {
-      setStatus("Type a brief in the box below first.");
-      return;
-    }
-    setStatus("Generating layout…");
-    try {
-      const res = await fetch("/api/workflow/suggest", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ brief }),
-      });
-      const body: { error?: string; workflow?: unknown } = await res.json();
-      if (!res.ok) {
-        setStatus(body.error ?? "Suggest failed");
-        return;
-      }
-      const doc = normalizeWorkflowDocument(body.workflow);
-      if (!doc) {
-        setStatus("Suggest returned an invalid workflow");
-        return;
-      }
-      setWorkflowId(doc.id);
-      setWorkflowName(doc.name);
-      setNodes(
-        doc.nodes.map((n) => ({
-          id: n.id,
-          type: n.type,
-          position: n.position,
-          data: n.data,
-        })),
-      );
-      setEdges(
-        doc.edges.map((e) => ({
-          id: e.id,
-          source: e.source,
-          target: e.target,
-          sourceHandle: e.sourceHandle ?? undefined,
-          targetHandle: e.targetHandle ?? undefined,
-          animated: true,
-        })),
-      );
-      setLastOutputs(null);
-      await saveWorkflowDoc(doc);
-      await refreshLibrary();
-      setStatus("Applied suggested workflow — review & run.");
-    } catch {
-      setStatus("Suggest request failed");
-    }
   };
 
   const removeFromLibrary = async (id: string) => {
@@ -828,91 +749,10 @@ export function WorkflowEditor() {
       </header>
 
       <div className="flex flex-1 overflow-hidden">
-        <aside className="w-56 shrink-0 space-y-2 border-r border-border bg-card px-3 py-3 text-xs text-card-foreground">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Input
-          </p>
-          <button
-            type="button"
-            className="w-full rounded-md border border-border px-2 py-1 text-left text-card-foreground hover:bg-accent"
-            onClick={() => addBlock("mediaInput")}
-          >
-            Campaign input
-          </button>
-          <p className="pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Generation
-          </p>
-          <button
-            type="button"
-            className="w-full rounded-md border border-border px-2 py-1 text-left text-card-foreground hover:bg-accent"
-            onClick={() => addBlock("falFluxSchnell")}
-          >
-            Flux Schnell (Fal)
-          </button>
-          <p className="pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Delivery
-          </p>
-          <button
-            type="button"
-            className="w-full rounded-md border border-border px-2 py-1 text-left text-card-foreground hover:bg-accent"
-            onClick={() => addBlock("platformExport")}
-          >
-            Platform export
-          </button>
-          <p className="pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Quick start
-          </p>
-          <button
-            type="button"
-            className="w-full rounded-md border border-dashed border-border px-2 py-1 text-left text-card-foreground hover:bg-accent"
-            onClick={starterWorkflow}
-          >
-            Insert Text → Flux graph
-          </button>
-          <p className="pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Suggest layout (template)
-          </p>
-          <textarea
-            value={suggestBrief}
-            onChange={(e) => setSuggestBrief(e.target.value)}
-            placeholder="e.g. Summer soda promo for Gen Z, mention TikTok…"
-            className="min-h-[72px] w-full resize-none rounded-md border border-border bg-muted px-2 py-1 text-[11px] text-foreground outline-none"
-          />
-          <button
-            type="button"
-            className="w-full rounded-md bg-primary px-2 py-1 text-left text-[11px] font-medium text-primary-foreground hover:bg-primary/90"
-            onClick={() => void suggestFromServer()}
-          >
-            Apply suggestion
-          </button>
-          <div className="space-y-2 border-t border-border pt-4">
-            <button
-              type="button"
-              className="w-full rounded-md border border-border px-2 py-1 text-left text-card-foreground hover:bg-accent"
-              onClick={exportJson}
-            >
-              Export JSON
-            </button>
-            <button
-              type="button"
-              className="w-full rounded-md border border-border px-2 py-1 text-left text-card-foreground hover:bg-accent"
-              onClick={() => importRef.current?.click()}
-            >
-              Import JSON
-            </button>
-            <input
-              ref={importRef}
-              type="file"
-              accept="application/json,.json"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                e.target.value = "";
-                if (file) void importJsonFile(file);
-              }}
-            />
-          </div>
-        </aside>
+        <WorkflowAgentPanel
+          onApplyDocument={(doc) => applyWorkflowDocument(doc)}
+          onStatus={setStatus}
+        />
 
         <div className="relative flex-1">
           <ReactFlow
@@ -935,6 +775,19 @@ export function WorkflowEditor() {
           </ReactFlow>
         </div>
       </div>
+
+      <input
+        ref={importRef}
+        type="file"
+        accept="application/json,.json"
+        className="hidden"
+        aria-hidden
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = "";
+          if (file) void importJsonFile(file);
+        }}
+      />
 
       <footer className="flex flex-wrap items-center gap-3 border-t border-border bg-card px-4 py-2 text-xs text-muted-foreground">
         {status ? <span className="text-foreground">{status}</span> : <span>Idle</span>}
@@ -966,6 +819,18 @@ export function WorkflowEditor() {
       onAddBlock={addBlockAtCursor}
       onDuplicateNode={duplicateContextNode}
       onDeleteNode={deleteContextNode}
+      onStarterWorkflow={() => {
+        starterWorkflow();
+        closeContextMenu();
+      }}
+      onExportJson={() => {
+        exportJson();
+        closeContextMenu();
+      }}
+      onTriggerImport={() => {
+        importRef.current?.click();
+        closeContextMenu();
+      }}
     />
     </>
   );
