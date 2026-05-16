@@ -1,19 +1,20 @@
 /**
- * Fal text→image helpers (workflow "Flux Schnell" node runs this path only).
+ * Fal text→image (workflow Flux node → POST `/api/fal/text-to-image`).
  *
- * Pricing snapshot (subject to fal.ai): **FLUX.1 [schnell]** (`fal-ai/flux/schnell`) is typically the
- * lowest-cost Flux text→image tier on fal, billed ~$0.003 / megapixel (see fal model page).
- * Other Flux SKUs (`flux/dev`, `flux-2/dev`, …) usually cost more per megapixel than Schnell.
- * Non-Flux models typically use another input schema — only Flux Schnell–compatible endpoints are wired here.
+ * Pricing (verify on fal): **FLUX.1 [schnell]** is billed about **$0.003/megapixel** on
+ * https://fal.ai/models/fal-ai/flux/schnell — lower per MP than e.g. FLUX.2 Klein (~$0.009/MP) and
+ * FLUX.2 [dev] (~$0.012/MP) per fal’s own comparison content. This app’s input shape matches Schnell;
+ * other endpoints need a different payload.
  */
+
+/** Default fal queue model for our text→image route (cheapest Flux text→image tier we support). */
+export const DEFAULT_FAL_TEXT_TO_IMAGE_MODEL = "fal-ai/flux/schnell";
 
 export type FalFluxPresetSize = "square_hd" | "landscape_4_3" | "portrait_4_3";
 
 export type FalFluxAcceleration = "none" | "regular" | "high";
 
 export type FalFluxOutputFormat = "jpeg" | "png";
-
-const DEFAULT_ENDPOINT = "fal-ai/flux/schnell";
 
 function truthyEnv(raw: string | undefined): boolean {
   const t = raw?.trim().toLowerCase();
@@ -39,9 +40,9 @@ export function getFalFluxOutputFormat(): FalFluxOutputFormat {
   return "jpeg";
 }
 
-/** Endpoint ID for fal.subscribe, e.g. `fal-ai/flux/schnell` or a pinned Schnell snapshot. */
+/** Endpoint ID for fal.subscribe (override via `FAL_TEXT_TO_IMAGE_MODEL`). */
 export function getFalTextToImageEndpointId(): string {
-  return process.env.FAL_TEXT_TO_IMAGE_MODEL?.trim() || DEFAULT_ENDPOINT;
+  return process.env.FAL_TEXT_TO_IMAGE_MODEL?.trim() || DEFAULT_FAL_TEXT_TO_IMAGE_MODEL;
 }
 
 const ENDPOINT_SAFE = /^[a-z0-9][a-z0-9_-]*\/[a-z0-9][a-z0-9_.-]*$/i;

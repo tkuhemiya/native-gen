@@ -122,22 +122,22 @@ export function MediaInputNode(props: NodeProps<AppNode>) {
 
   return (
     <div
-      className="relative w-[272px] rounded-lg border border-white/10 bg-[#0a0a0a] shadow-xl"
+      className="relative w-[272px] rounded-lg border border-border bg-card text-card-foreground shadow-sm"
       onPasteCapture={onPasteCapture}
     >
       <Handle
         type="source"
         position={Position.Right}
-        className="z-10 !top-1/2 !h-2.5 !w-2.5 !-translate-y-1/2 !border-2 !border-[#0a0a0a] !bg-zinc-200"
+        className="z-10 !top-1/2 !h-3 !w-3 !-translate-y-1/2 !border-2 !border-card !bg-sky-500"
       />
-      <div className="flex cursor-grab select-none items-center justify-center rounded-t-lg border-b border-white/10 bg-white/[0.03] px-2 py-1.5 active:cursor-grabbing">
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+      <div className="flex cursor-grab select-none items-center justify-center rounded-t-lg border-b border-border px-2 py-1.5 active:cursor-grabbing">
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
           Media in
         </span>
       </div>
-      <div className="relative h-14 w-full">
+      <div className="px-3 pt-2">
         <textarea
-          className="nodrag nopan nowheel h-full w-full resize-none bg-transparent px-3 py-2.5 text-[13px] leading-snug text-zinc-100 placeholder:text-zinc-600 outline-none focus:ring-0"
+          className="nodrag nopan nowheel h-14 w-full resize-none rounded-md border border-border bg-muted px-2 py-1 text-xs leading-snug text-foreground placeholder:text-muted-foreground outline-none focus:ring-0"
           placeholder="Type prompt or notes…"
           value={data.value}
           onChange={(e) => {
@@ -148,13 +148,11 @@ export function MediaInputNode(props: NodeProps<AppNode>) {
         />
       </div>
 
-      <div className="border-t border-white/10" />
-
       <div
         role="button"
         tabIndex={0}
-        className={`nodrag nopan nowheel relative flex min-h-[112px] max-h-[200px] flex-col cursor-pointer px-3 py-3 transition-colors ${
-          dragOver ? "bg-white/10" : "hover:bg-white/[0.04]"
+        className={`nodrag nopan nowheel relative flex min-h-[112px] max-h-[200px] flex-col cursor-pointer border-t border-border px-3 py-3 transition-colors ${
+          dragOver ? "bg-accent" : "bg-muted/30 hover:bg-muted/60"
         }`}
         onClick={() => fileInputRef.current?.click()}
         onKeyDown={(e) => {
@@ -207,11 +205,11 @@ export function MediaInputNode(props: NodeProps<AppNode>) {
             {data.images.map((asset, i) => (
               <div
                 key={`img-${i}-${asset.dataUrl.slice(0, 24)}`}
-                className="group relative overflow-hidden rounded-md border border-white/10"
+                className="group relative overflow-hidden rounded-md border border-border"
               >
                 <button
                   type="button"
-                  className="absolute right-1 top-1 z-10 flex h-6 w-6 items-center justify-center rounded bg-black/70 text-xs text-zinc-200 opacity-80 hover:opacity-100"
+                  className="absolute right-1 top-1 z-10 flex h-6 w-6 items-center justify-center rounded border border-border bg-card/95 text-xs text-card-foreground opacity-90 shadow-sm hover:opacity-100"
                   onClick={(e) => {
                     e.stopPropagation();
                     removeImageAt(i);
@@ -231,11 +229,11 @@ export function MediaInputNode(props: NodeProps<AppNode>) {
             {data.videos.map((asset, i) => (
               <div
                 key={`vid-${i}-${asset.dataUrl.slice(0, 24)}`}
-                className="group relative overflow-hidden rounded-md border border-white/10"
+                className="group relative overflow-hidden rounded-md border border-border"
               >
                 <button
                   type="button"
-                  className="absolute right-1 top-1 z-10 flex h-6 w-6 items-center justify-center rounded bg-black/70 text-xs text-zinc-200 opacity-80 hover:opacity-100"
+                  className="absolute right-1 top-1 z-10 flex h-6 w-6 items-center justify-center rounded border border-border bg-card/95 text-xs text-card-foreground opacity-90 shadow-sm hover:opacity-100"
                   onClick={(e) => {
                     e.stopPropagation();
                     removeVideoAt(i);
@@ -257,13 +255,13 @@ export function MediaInputNode(props: NodeProps<AppNode>) {
         ) : null}
 
         {!hasMedia ? (
-          <p className="select-none text-center text-[11px] leading-relaxed text-zinc-500">
+          <p className="select-none text-center text-[11px] leading-relaxed text-muted-foreground">
             Drop images or videos
             <br />
-            <span className="text-zinc-600">or paste · click to browse</span>
+            <span className="text-muted-foreground/80">or paste · click to browse</span>
           </p>
         ) : (
-          <p className="select-none text-center text-[10px] text-zinc-600">
+          <p className="select-none text-center text-[10px] text-muted-foreground">
             Add more via drop, paste, or browse
           </p>
         )}

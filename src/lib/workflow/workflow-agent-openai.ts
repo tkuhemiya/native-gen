@@ -25,6 +25,7 @@ Return ONLY valid JSON (no markdown) with this shape:
 Rules:
 - The graph must be ONE connected component, acyclic, left-to-right flow.
 - Node types (field type AND data.kind): "mediaInput", "falFluxSchnell", "platformExport".
+- Text→image runs on the server via fal; default model is fal-ai/flux/schnell (~$0.003/megapixel on fal, typically the cheapest Flux text→image tier this stack supports). Override with env FAL_TEXT_TO_IMAGE_MODEL if needed.
 
 mediaInput node:
   "type": "mediaInput", "position": {"x": number, "y": number},

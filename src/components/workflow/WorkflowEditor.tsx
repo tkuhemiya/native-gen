@@ -41,10 +41,13 @@ import {
 } from "@/lib/workflow/schema";
 import { runWorkflowDAG, wrapError, type RuntimeOutputs } from "@/lib/workflow/runner";
 import {
+  clearLastLoadedWorkflowId,
   deleteWorkflowDoc,
+  getLastLoadedWorkflowId,
   listWorkflowDocs,
   loadWorkflowDoc,
   saveWorkflowDoc,
+  setLastLoadedWorkflowId,
 } from "@/lib/workflow/storage";
 import { normalizeWorkflowDocument } from "@/lib/workflow/migrate";
 
@@ -88,6 +91,8 @@ export function WorkflowEditor() {
   const [nodes, setNodes, onNodesChange] = useNodesState<AppNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [library, setLibrary] = useState<WorkflowDocument[]>([]);
+  /** False until IndexedDB has been read and optional latest workflow applied — avoids autosaving an empty doc before hydrate. */
+  const [storageHydrated, setStorageHydrated] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [lastOutputs, setLastOutputs] = useState<RuntimeOutputs | null>(null);
 
@@ -173,6 +178,7 @@ export function WorkflowEditor() {
 
   const applyWorkflowDocument = useCallback(
     async (doc: WorkflowDocument) => {
+      setLastLoadedWorkflowId(doc.id);
       setWorkflowId(doc.id);
       setWorkflowName(doc.name);
       setNodes(
@@ -202,13 +208,54 @@ export function WorkflowEditor() {
 
   useEffect(() => {
     let cancelled = false;
-    void listWorkflowDocs().then((docs) => {
-      if (!cancelled) setLibrary(docs);
-    });
+    void (async () => {
+      const docs = await listWorkflowDocs();
+      if (cancelled) return;
+      setLibrary(docs);
+
+      const preferredId = getLastLoadedWorkflowId();
+      let doc: WorkflowDocument | undefined;
+      if (preferredId) {
+        doc = await loadWorkflowDoc(preferredId);
+        if (!doc) {
+          clearLastLoadedWorkflowId();
+        }
+      }
+      // No remembered workflow yet (first visit): keep previous behavior — open newest by updatedAt.
+      if (!doc && docs.length > 0 && !preferredId) {
+        doc = await loadWorkflowDoc(docs[0]!.id);
+      }
+
+      if (doc && !cancelled) {
+        setLastLoadedWorkflowId(doc.id);
+        setWorkflowId(doc.id);
+        setWorkflowName(doc.name);
+        setNodes(
+          doc.nodes.map((n) => ({
+            id: n.id,
+            type: n.type,
+            position: n.position,
+            data: n.data,
+          })),
+        );
+        setEdges(
+          doc.edges.map((e) => ({
+            id: e.id,
+            source: e.source,
+            target: e.target,
+            sourceHandle: e.sourceHandle ?? undefined,
+            targetHandle: e.targetHandle ?? undefined,
+            animated: true,
+          })),
+        );
+        setLastOutputs(null);
+      }
+      setStorageHydrated(true);
+    })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [setEdges, setNodes]);
 
   const saveNow = useCallback(async () => {
     const doc = {
@@ -229,11 +276,12 @@ export function WorkflowEditor() {
   }, [workflowId, workflowName, nodes, edges, refreshLibrary]);
 
   useEffect(() => {
+    if (!storageHydrated) return;
     const handle = window.setTimeout(() => {
       void saveNow();
     }, 1400);
     return () => window.clearTimeout(handle);
-  }, [saveNow]);
+  }, [storageHydrated, saveNow]);
 
   useEffect(() => {
     if (contextMenu.kind === "closed") return;
@@ -355,8 +403,10 @@ export function WorkflowEditor() {
   const starterWorkflow = () => {
     const textId = crypto.randomUUID();
     const fluxId = crypto.randomUUID();
+    const nextId = crypto.randomUUID();
     setWorkflowName("Starter · Flux Schnell");
-    setWorkflowId(crypto.randomUUID());
+    setWorkflowId(nextId);
+    setLastLoadedWorkflowId(nextId);
     setNodes([
       {
         id: textId,
@@ -391,8 +441,10 @@ export function WorkflowEditor() {
   };
 
   const createBlankWorkflow = () => {
+    const nextId = crypto.randomUUID();
     setWorkflowName("Untitled campaign");
-    setWorkflowId(crypto.randomUUID());
+    setWorkflowId(nextId);
+    setLastLoadedWorkflowId(nextId);
     setNodes([]);
     setEdges([]);
     setLastOutputs(null);
@@ -637,24 +689,34 @@ export function WorkflowEditor() {
             <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               Library
             </span>
-            <select
-              className="rounded-md border border-border bg-card px-2 py-1 text-xs text-card-foreground"
-              defaultValue=""
-              onChange={(e) => {
-                const v = e.target.value;
-                e.target.value = "";
-                void loadFromLibrary(v);
-              }}
-            >
-              <option value="" disabled>
-                Load saved…
-              </option>
-              {library.map((doc) => (
-                <option key={doc.id} value={doc.id}>
-                  {doc.name}
+            <div className="flex items-center gap-1">
+              <select
+                className="min-w-0 flex-1 rounded-md border border-border bg-card px-2 py-1 text-xs text-card-foreground"
+                defaultValue=""
+                onChange={(e) => {
+                  const v = e.target.value;
+                  e.target.value = "";
+                  void loadFromLibrary(v);
+                }}
+              >
+                <option value="" disabled>
+                  Load saved…
                 </option>
-              ))}
-            </select>
+                {library.map((doc) => (
+                  <option key={doc.id} value={doc.id}>
+                    {doc.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                title="New campaign"
+                className="shrink-0 rounded-md border border-border bg-card px-2 py-1 text-sm font-semibold leading-none text-card-foreground hover:bg-accent"
+                onClick={createBlankWorkflow}
+              >
+                +
+              </button>
+            </div>
           </div>
           <button
             type="button"
@@ -662,13 +724,6 @@ export function WorkflowEditor() {
             onClick={() => void removeFromLibrary(workflowId)}
           >
             Delete current
-          </button>
-          <button
-            type="button"
-            className="rounded-md border border-border bg-card px-3 py-1 text-xs font-medium text-card-foreground hover:bg-accent"
-            onClick={createBlankWorkflow}
-          >
-            New
           </button>
           <button
             type="button"

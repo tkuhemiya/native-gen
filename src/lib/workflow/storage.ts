@@ -13,7 +13,26 @@ interface NativeGenDB extends DBSchema {
 const DB_NAME = "native-gen";
 const DB_VERSION = 1;
 
+/** Remember which workflow was open last session (not “most recently autosaved”). */
+const LAST_LOADED_WORKFLOW_ID_KEY = "native-gen-last-loaded-workflow-id";
+
 let dbPromise: Promise<IDBPDatabase<NativeGenDB>> | null = null;
+
+export function getLastLoadedWorkflowId(): string | null {
+  if (typeof window === "undefined") return null;
+  const v = window.localStorage.getItem(LAST_LOADED_WORKFLOW_ID_KEY)?.trim();
+  return v || null;
+}
+
+export function setLastLoadedWorkflowId(id: string): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(LAST_LOADED_WORKFLOW_ID_KEY, id);
+}
+
+export function clearLastLoadedWorkflowId(): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(LAST_LOADED_WORKFLOW_ID_KEY);
+}
 
 function getDb() {
   if (!dbPromise) {
