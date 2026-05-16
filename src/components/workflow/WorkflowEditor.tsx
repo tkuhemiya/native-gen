@@ -19,6 +19,7 @@ import {
 import { saveAs } from "file-saver";
 import JSZip from "jszip";
 import { useTheme } from "next-themes";
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -99,7 +100,7 @@ export function WorkflowEditor() {
   const { resolvedTheme } = useTheme();
 
   useEffect(() => {
-    setThemeMounted(true);
+    queueMicrotask(() => setThemeMounted(true));
   }, []);
 
   const flowColorMode =
@@ -604,6 +605,12 @@ export function WorkflowEditor() {
           >
             Download ZIP
           </button>
+          <Link
+            href="/settings/connections"
+            className="rounded-md border border-border bg-card px-3 py-1 text-xs font-medium text-card-foreground hover:bg-accent"
+          >
+            Social accounts
+          </Link>
           <ThemeToggle />
         </div>
       </header>

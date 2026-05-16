@@ -122,17 +122,22 @@ export function MediaInputNode(props: NodeProps<AppNode>) {
 
   return (
     <div
-      className="nodrag relative w-[272px] rounded-lg border border-white/10 bg-[#0a0a0a] shadow-xl"
+      className="relative w-[272px] rounded-lg border border-white/10 bg-[#0a0a0a] shadow-xl"
       onPasteCapture={onPasteCapture}
     >
-      <div className="relative h-14 w-full pr-6">
-        <Handle
-          type="source"
-          position={Position.Right}
-          className="z-10 !top-1/2 !h-2.5 !w-2.5 !-translate-y-1/2 !border-2 !border-[#0a0a0a] !bg-zinc-200"
-        />
+      <Handle
+        type="source"
+        position={Position.Right}
+        className="z-10 !top-1/2 !h-2.5 !w-2.5 !-translate-y-1/2 !border-2 !border-[#0a0a0a] !bg-zinc-200"
+      />
+      <div className="flex cursor-grab select-none items-center justify-center rounded-t-lg border-b border-white/10 bg-white/[0.03] px-2 py-1.5 active:cursor-grabbing">
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+          Media in
+        </span>
+      </div>
+      <div className="relative h-14 w-full">
         <textarea
-          className="nopan nowheel h-full w-full resize-none bg-transparent px-3 py-2.5 text-[13px] leading-snug text-zinc-100 placeholder:text-zinc-600 outline-none focus:ring-0"
+          className="nodrag nopan nowheel h-full w-full resize-none bg-transparent px-3 py-2.5 text-[13px] leading-snug text-zinc-100 placeholder:text-zinc-600 outline-none focus:ring-0"
           placeholder="Type prompt or notes…"
           value={data.value}
           onChange={(e) => {
