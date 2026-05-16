@@ -1,4 +1,4 @@
-import { fal } from "@fal-ai/client";
+import { ApiError, fal } from "@fal-ai/client";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -59,6 +59,76 @@ function extractVideoUrl(data: unknown): string | undefined {
 function extractCaption(data: unknown): string | undefined {
   const r = (data as { results?: unknown }).results;
   return typeof r === "string" ? r : undefined;
+}
+
+/** WAN rejects explicit nulls on unused optional fields; fal 422 surfaces as statusText-only errors. */
+const WAN_FALLBACK_PROMPT =
+  "Subtle cinematic motion, sharp detail, advertising polish";
+
+function wanPromptFromOptional(prompt: string | undefined): string {
+  const t = prompt?.trim();
+  return t && t.length > 0 ? t : WAN_FALLBACK_PROMPT;
+}
+
+function formatFalClientError(e: unknown): string {
+  if (e instanceof ApiError) {
+    const body = e.body as { message?: string; detail?: unknown } | undefined;
+    const msg = body?.message?.trim();
+    if (msg) return msg;
+    const detail = body?.detail;
+    if (typeof detail === "string" && detail.trim()) return detail.trim();
+    if (Array.isArray(detail)) {
+      const parts = detail.map((item: unknown) => {
+        if (item && typeof item === "object" && "msg" in item) {
+          const row = item as { msg?: string; loc?: unknown };
+          const loc =
+            Array.isArray(row.loc) ? row.loc.join(".") : String(row.loc ?? "");
+          const m = row.msg?.trim() ?? "";
+          return [loc, m].filter(Boolean).join(": ");
+        }
+        try {
+          return JSON.stringify(item);
+        } catch {
+          return String(item);
+        }
+      });
+      const joined = parts.filter(Boolean).join("; ");
+      if (joined) return joined;
+    }
+    if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+      const o = detail as Record<string, unknown>;
+      if (typeof o.message === "string" && o.message.trim()) {
+        return o.message.trim();
+      }
+      if (typeof o.msg === "string" && o.msg.trim()) return o.msg.trim();
+    }
+  }
+  return e instanceof Error ? e.message : "Fal request failed";
+}
+
+function buildWanMotionInput(
+  intent: "image-to-video" | "video-to-video",
+  payload: {
+    imageUrl?: string;
+    videoUrl?: string;
+    prompt?: string | undefined;
+    resolution: "720p" | "1080p";
+    durationSec: number;
+  },
+): Record<string, unknown> {
+  const input: Record<string, unknown> = {
+    prompt: wanPromptFromOptional(payload.prompt),
+    resolution: payload.resolution,
+    duration: payload.durationSec,
+    enable_prompt_expansion: true,
+    enable_safety_checker: true,
+  };
+  if (intent === "image-to-video") {
+    input.image_url = payload.imageUrl;
+  } else {
+    input.video_url = payload.videoUrl;
+  }
+  return input;
 }
 
 /**
@@ -123,7 +193,6 @@ export async function POST(req: Request) {
             duration,
             resolution,
             generate_audio: !payload.silent,
-            negative_prompt: null,
           },
           logs: true,
           priority,
@@ -141,26 +210,22 @@ export async function POST(req: Request) {
       case "video-to-video": {
         const endpointId = getFalImageToVideoEndpointId();
         assertSafeFalEndpointId(endpointId);
-        const base =
+        const wanInput =
           payload.intent === "image-to-video"
-            ? {
-                image_url: payload.imageUrl,
-                video_url: null,
-                prompt: payload.prompt ?? null,
-              }
-            : {
-                image_url: null,
-                video_url: payload.videoUrl,
-                prompt: payload.prompt ?? null,
-              };
+            ? buildWanMotionInput("image-to-video", {
+                imageUrl: payload.imageUrl,
+                prompt: payload.prompt,
+                resolution: payload.resolution,
+                durationSec: payload.durationSec,
+              })
+            : buildWanMotionInput("video-to-video", {
+                videoUrl: payload.videoUrl,
+                prompt: payload.prompt,
+                resolution: payload.resolution,
+                durationSec: payload.durationSec,
+              });
         const result = await fal.subscribe(endpointId, {
-          input: {
-            ...base,
-            resolution: payload.resolution,
-            duration: payload.durationSec,
-            enable_prompt_expansion: true,
-            enable_safety_checker: true,
-          },
+          input: wanInput,
           logs: true,
           priority,
         });
@@ -196,7 +261,7 @@ export async function POST(req: Request) {
       }
     }
   } catch (e) {
-    const message = e instanceof Error ? e.message : "Fal request failed";
+    const message = formatFalClientError(e);
     return NextResponse.json({ error: message }, { status: 502 });
   }
 }

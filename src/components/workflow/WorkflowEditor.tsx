@@ -44,14 +44,22 @@ import {
   type WorkflowNode,
 } from "@/lib/workflow/schema";
 import { runWorkflowDAG, wrapError, type RuntimeOutputs } from "@/lib/workflow/runner";
+import {
+  buildWorkflowDebugLogExportJson,
+  clearPersistedWorkflowLogs,
+  clearWorkflowMemoryLog,
+  logWorkflow,
+} from "@/lib/workflow/workflow-debug-log";
 import { areWorkflowHandlesCompatible } from "@/lib/workflow/workflow-connection";
 import {
   clearLastLoadedWorkflowId,
   deleteWorkflowDoc,
   getLastLoadedWorkflowId,
+  getLatestRunArtifactRecordsForWorkflow,
   listWorkflowDocs,
   loadWorkflowDoc,
   persistWorkflowRunArtifacts,
+  rehydrateRuntimeOutputsFromArtifacts,
   saveWorkflowDoc,
   setLastLoadedWorkflowId,
 } from "@/lib/workflow/storage";
@@ -82,6 +90,19 @@ function rfEdgesToWorkflow(edges: Edge[]): WorkflowEdge[] {
     sourceHandle: e.sourceHandle ?? null,
     targetHandle: e.targetHandle ?? null,
   }));
+}
+
+function filterOutputsForCurrentGraph(
+  outputs: RuntimeOutputs | null,
+  workflowNodes: WorkflowNode[],
+): RuntimeOutputs {
+  if (!outputs) return {};
+  const ids = new Set(workflowNodes.map((n) => n.id));
+  const next: RuntimeOutputs = {};
+  for (const [nid, out] of Object.entries(outputs)) {
+    if (ids.has(nid)) next[nid] = out;
+  }
+  return next;
 }
 
 type FlowContextMenuState =
@@ -160,6 +181,12 @@ export function WorkflowEditor() {
 
   const importRef = useRef<HTMLInputElement>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
+  /** Avoid re-fetching IndexedDB for the same workflow when `lastOutputs` is empty. */
+  const restoredMediaForWorkflowRef = useRef<string | null>(null);
+  /** Mirrors completed node outputs during the current run (state updates can lag behind `catch`). */
+  const partialRunOutputsRef = useRef<RuntimeOutputs>({});
+  /** Outputs present when Run was clicked; restored if the new run errors before any node completes. */
+  const outputsSnapshotBeforeRunRef = useRef<RuntimeOutputs | null>(null);
   const paneFlowAnchorRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const [contextMenu, setContextMenu] = useState<FlowContextMenuState>({
     kind: "closed",
@@ -189,6 +216,13 @@ export function WorkflowEditor() {
     [lastOutputs, liveOutputs, activeNodeId, runPhase],
   );
 
+  const resumeCheckpoint = useMemo(
+    () => filterOutputsForCurrentGraph(lastOutputs, rfNodesToWorkflow(nodes)),
+    [lastOutputs, nodes],
+  );
+  const canResumeWorkflow =
+    runPhase !== "running" && Object.keys(resumeCheckpoint).length > 0;
+
   const closeContextMenu = useCallback(() => {
     setContextMenu({ kind: "closed" });
   }, []);
@@ -199,6 +233,7 @@ export function WorkflowEditor() {
 
   const applyWorkflowDocument = useCallback(
     async (doc: WorkflowDocument) => {
+      restoredMediaForWorkflowRef.current = null;
       setLastLoadedWorkflowId(doc.id);
       setWorkflowId(doc.id);
       setWorkflowName(doc.name);
@@ -343,6 +378,43 @@ export function WorkflowEditor() {
     }, 1400);
     return () => window.clearTimeout(handle);
   }, [storageHydrated, saveNow]);
+
+  useEffect(() => {
+    if (!storageHydrated) return;
+    if (lastOutputs) return;
+    if (runPhase === "running") return;
+    if (nodes.length === 0) return;
+    if (restoredMediaForWorkflowRef.current === workflowId) return;
+
+    let cancelled = false;
+    void (async () => {
+      const records = await getLatestRunArtifactRecordsForWorkflow(workflowId);
+      if (cancelled) return;
+      if (!records?.length) {
+        restoredMediaForWorkflowRef.current = workflowId;
+        return;
+      }
+      const restored = await rehydrateRuntimeOutputsFromArtifacts(
+        records,
+        rfNodesToWorkflow(nodes),
+      );
+      if (cancelled) return;
+      if (!restored || Object.keys(restored).length === 0) {
+        restoredMediaForWorkflowRef.current = workflowId;
+        return;
+      }
+      restoredMediaForWorkflowRef.current = workflowId;
+      setLastOutputs(restored);
+      setLiveOutputs(restored);
+      setRunPhase("done");
+      setStatus(
+        "Restored last run media from IndexedDB (images/video blobs). localStorage keeps a small text snapshot only.",
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [storageHydrated, workflowId, lastOutputs, runPhase, nodes]);
 
   useEffect(() => {
     if (contextMenu.kind === "closed") return;
@@ -523,6 +595,7 @@ export function WorkflowEditor() {
   };
 
   const createBlankWorkflow = () => {
+    restoredMediaForWorkflowRef.current = null;
     const nextId = crypto.randomUUID();
     setWorkflowName("Untitled campaign");
     setWorkflowId(nextId);
@@ -591,20 +664,49 @@ export function WorkflowEditor() {
     await refreshLibrary();
   };
 
-  const runGraph = async () => {
-    setStatus("Running…");
+  const runGraph = async (mode: "full" | "resume") => {
+    const workflowNodes = rfNodesToWorkflow(nodes);
+    const reuseFiltered =
+      mode === "resume"
+        ? filterOutputsForCurrentGraph(lastOutputs, workflowNodes)
+        : {};
+
+    logWorkflow(
+      "info",
+      "WorkflowEditor",
+      mode === "resume" ? "Resume workflow" : "Run workflow",
+      {
+        workflowId,
+        workflowName,
+        mode,
+        reuseNodeIds:
+          mode === "resume" ? Object.keys(reuseFiltered) : [],
+      },
+    );
+
+    setStatus(mode === "resume" ? "Resuming…" : "Running…");
+    outputsSnapshotBeforeRunRef.current = lastOutputs ? { ...lastOutputs } : null;
+    partialRunOutputsRef.current =
+      mode === "resume" ? { ...reuseFiltered } : {};
     setLastOutputs(null);
-    setLiveOutputs({});
+    setLiveOutputs(mode === "resume" ? { ...reuseFiltered } : {});
     setRunPhase("running");
     setActiveNodeId(null);
     try {
-      const workflowNodes = rfNodesToWorkflow(nodes);
       const outputs = await runWorkflowDAG(
         workflowNodes,
         rfEdgesToWorkflow(edges),
         {
+          reuseOutputs:
+            mode === "resume" && Object.keys(reuseFiltered).length > 0
+              ? reuseFiltered
+              : undefined,
           onProgress: (p) => setStatus(p.message ?? p.phase),
           onNodeComplete: (e) => {
+            partialRunOutputsRef.current = {
+              ...partialRunOutputsRef.current,
+              [e.nodeId]: e.output,
+            };
             setLiveOutputs((prev) => ({
               ...(prev ?? {}),
               [e.nodeId]: e.output,
@@ -617,7 +719,10 @@ export function WorkflowEditor() {
       setLiveOutputs(outputs);
       setActiveNodeId(null);
       setRunPhase("done");
-      setStatus("Run finished");
+      setStatus(mode === "resume" ? "Resume finished" : "Run finished");
+      logWorkflow("info", "WorkflowEditor", "Run finished OK", {
+        outputNodes: Object.keys(outputs).length,
+      });
       void persistWorkflowRunArtifacts(
         workflowId,
         workflowName,
@@ -626,17 +731,54 @@ export function WorkflowEditor() {
       ).then(({ count }) => {
         if (count > 0) {
           setStatus(
-            `Run finished — saved ${count} file(s) to this browser (IndexedDB)`,
+            `${mode === "resume" ? "Resume" : "Run"} finished — saved ${count} file(s) (media in IndexedDB; text snippets mirrored to localStorage).`,
           );
         }
       });
     } catch (error) {
+      const ge = wrapError(error);
+      logWorkflow("error", "WorkflowEditor", "Run failed", {
+        message: ge.message,
+      });
       setRunPhase("error");
-      setLiveOutputs(null);
-      setLastOutputs(null);
-      setStatus(wrapError(error).message);
+      const partial = partialRunOutputsRef.current;
+      const snap = outputsSnapshotBeforeRunRef.current;
+      const restored =
+        Object.keys(partial).length > 0
+          ? { ...partial }
+          : snap && Object.keys(snap).length > 0
+            ? { ...snap }
+            : null;
+      setLastOutputs(restored);
+      setLiveOutputs(restored);
+      if (!restored) {
+        restoredMediaForWorkflowRef.current = null;
+      }
+      setActiveNodeId(null);
+      setStatus(ge.message);
     }
   };
+
+  const downloadWorkflowDebugLog = useCallback(async () => {
+    try {
+      const json = await buildWorkflowDebugLogExportJson();
+      const blob = new Blob([json], {
+        type: "application/json;charset=utf-8",
+      });
+      const slug =
+        workflowName.replace(/\s+/g, "-").toLowerCase() || "workflow";
+      saveAs(blob, `${slug}-workflow-debug-log.json`);
+      setStatus("Exported workflow debug log (console + IndexedDB history)");
+    } catch {
+      setStatus("Could not export debug log.");
+    }
+  }, [workflowName]);
+
+  const clearWorkflowDebugLogsAll = useCallback(async () => {
+    await clearPersistedWorkflowLogs();
+    clearWorkflowMemoryLog();
+    setStatus("Cleared workflow debug log buffer");
+  }, []);
 
   const downloadAllGenerated = useCallback(async () => {
     if (!lastOutputs) {
@@ -862,9 +1004,18 @@ export function WorkflowEditor() {
           <button
             type="button"
             className="rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90"
-            onClick={() => void runGraph()}
+            onClick={() => void runGraph("full")}
           >
             Run workflow
+          </button>
+          <button
+            type="button"
+            title="Reuse generation outputs from the last run and continue from the next node (fixes Fal charges / time)"
+            disabled={!canResumeWorkflow}
+            className="rounded-md border border-border bg-card px-3 py-1 text-xs font-medium text-card-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={() => void runGraph("resume")}
+          >
+            Resume
           </button>
           {falRunCostEstimate?.ok ? (
             <span
@@ -881,6 +1032,22 @@ export function WorkflowEditor() {
               Cost est. unavailable
             </span>
           ) : null}
+          <button
+            type="button"
+            className="rounded-md border border-border bg-card px-3 py-1 text-xs font-medium text-card-foreground hover:bg-accent"
+            title="Download JSON merge of console workflow logs + IndexedDB (native-gen DB v3)"
+            onClick={() => void downloadWorkflowDebugLog()}
+          >
+            Export debug log
+          </button>
+          <button
+            type="button"
+            className="rounded-md border border-border bg-muted px-3 py-1 text-xs font-medium text-muted-foreground hover:bg-accent"
+            title="Clear persisted log ring buffer (IndexedDB) and in-memory tail"
+            onClick={() => void clearWorkflowDebugLogsAll()}
+          >
+            Clear logs
+          </button>
           <button
             type="button"
             className="rounded-md border border-border bg-card px-3 py-1 text-xs font-medium text-card-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"

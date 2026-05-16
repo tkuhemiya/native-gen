@@ -1,4 +1,5 @@
 import { createOpenAI } from "@ai-sdk/openai";
+import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import { generateText, tool } from "ai";
 import { z } from "zod";
 
@@ -28,7 +29,7 @@ const SYSTEM = `You are a **workflow editor**: you read the canvas as JSON and a
 - **Root:** \`id\` (uuid string), \`name\`, \`version\`: ${WORKFLOW_DOCUMENT_VERSION}, \`updatedAt\` (ISO-8601 string), \`nodes\`, \`edges\`
 - **Node:** \`id\`, \`type\` (\`mediaInput\` | \`generationBlock\` | \`platformExport\`), \`position\` { x, y }, \`data\` (must match type)
   - **mediaInput** \`data\`: \`kind: "mediaInput"\`, \`label\`, \`value\` (brief text), \`images\`[], \`videos\`[] — use empty arrays unless you intentionally clear uploads
-  - **generationBlock** \`data\`: \`kind: "generationBlock"\`, \`label\`, \`suffix\`, \`imageSize\` (e.g. \`landscape_16_9\`), \`numInferenceSteps\` (1–12), \`videoDuration\` (\`4s\`|\`6s\`|\`8s\`), \`videoResolution\`, \`videoSilent\`, \`wanDurationSec\`, \`wanResolution\`
+  - **generationBlock** \`data\`: \`kind: "generationBlock"\`, \`label\` (short UI title), \`suffix\` (**long, concrete visual brief** for Flux/Veo/WAN — never slug-only; see “Diffusion & video prompts”), \`imageSize\` (e.g. \`landscape_16_9\`), \`numInferenceSteps\` (1–12), \`videoDuration\` (\`4s\`|\`6s\`|\`8s\`), \`videoResolution\`, \`videoSilent\`, \`wanDurationSec\`, \`wanResolution\`
   - **platformExport** \`data\`: \`kind: "platformExport"\`, \`label\`, \`platform\` (\`youtube\`|\`facebook\`|\`instagram\`|\`tiktok\`), optional \`metaPageId\`
 - **Edge:** \`id\`, \`source\`, \`target\` (node ids), \`sourceHandle\`, \`targetHandle\` — \`"text"\`, \`"image"\`, or \`"video"\` (nullable handles allowed per schema)
 
@@ -40,10 +41,16 @@ const SYSTEM = `You are a **workflow editor**: you read the canvas as JSON and a
 ## Story & graph complexity (**strong default**)
 - **Avoid** collapsing everything into the **tiny 3-node** pattern (mediaInput → **one** generationBlock → platformExport) unless the user **explicitly** wants a single asset, one hero shot, or “simplest / fastest / minimal” output.
 - For **stories, narratives, campaigns, arcs, scenes, beats, kids/families, multiple characters, “# kids”, “each kid”, carousels, or episodic** asks: design a **wide, readable DAG** with **many generationBlocks** — mix **sequential** story depth and **parallel** lanes where the brief fits.
-- **Sequential beats (chain text → text → … → image/video):** give **each narrative or visual beat its own** \`generationBlock\` with a clear \`label\` and **specific** \`suffix\` (examples: \`story-bible\`, \`scene-outline\`, \`beat1-establish\`, \`beat2-conflict\`, \`beat3-payoff\`, \`Keyframe-wide\`, \`motion-i2v\`). Wire **text** outputs forward into the next block’s **text** input so copy and story state flow through the chain; add **image**/**video** blocks where outputs should be visuals, then route into export.
-- **Parallel subjects:** if the brief implies **count**, **several people**, **per-kid**, **variants**, or placeholders like \`# kids\`, add **one generationBlock per subject or variant** fed from the same (or split) **text** lane; wire **each** subject’s **image** (or **video**) pins into **platformExport** — **multiple edges** into the export’s \`image\` handle are allowed.
+- **Sequential beats (chain text → text → … → image/video):** give **each narrative or visual beat its own** \`generationBlock\` with a short \`label\` for humans and a **rich \`suffix\`** written like a **shot brief** (full clauses describing talent, wardrobe, set, action, lens/lighting, palette — pulled from the user’s campaign, not generic placeholders). Wire **text** outputs forward into the next block’s **text** input so copy and story state flow through the chain; add **image**/**video** blocks where outputs should be visuals, then route into export.
+- **Parallel subjects:** if the brief implies **count**, **several people**, **per-kid**, **variants**, or placeholders like \`# kids\`, add **one generationBlock per subject or variant** fed from the same (or split) **text** lane; **each** lane needs a **distinct, concrete \`suffix\`** (different outfits, hair, props, framing — never only \`hero-kid-1\`-style slugs); wire **each** subject’s **image** (or **video**) pins into **platformExport** — **multiple edges** into the export’s \`image\` handle are allowed.
 - **Concrete target:** for narrative/campaign-style requests, aim for **≥5 generationBlocks** before export (often **6–12+** is appropriate). More connected blocks are **better** than an under-specified pipeline as long as the graph stays a valid DAG.
 - Usually keep **one** \`platformExport\` at the end; merge parallel lanes into it unless the user names multiple distinct destinations.
+
+## Diffusion & video prompts (**mandatory for every generationBlock**)
+- **Never** ship a **suffix** (or rely on upstream text) that is **only** an opaque codename: \`hero-kid-1\`, \`scene-A\`, \`variant_03\`, beat IDs, etc. Image/video models **cannot** infer characters from internal labels — they need **explicit visual description**.
+- Blocks that output **image** or **video** must combine upstream copy with a **suffix** that reads like **production direction**: subject(s) + age range + wardrobe + expression/pose, environment/set, action, camera/lens/lighting, color grade/mood, brand/ad tone, and short **negatives** when useful (“no watermark”, “no on-screen text”, “no extra fingers”).
+- **Labels** stay concise for the canvas UI; the **suffix** carries the heavy Fal-facing payload — longer suffixes are expected when campaigns need specificity.
+- When the user brief is thin, **infer specifics conservatively** (plausible wardrobe colors, setting, time of day) instead of leaving shorthand slugs — stay aligned with brand-safe, non-exploitative depictions.
 
 ## Media in snapshots
 The **Canvas snapshot** below strips **image/video binary data** from mediaInput nodes. If you omit or leave \`images\`/\`videos\` empty for a node id that already existed, the **server keeps** the user’s prior uploads for that id.
@@ -55,6 +62,49 @@ The **Canvas snapshot** below strips **image/video binary data** from mediaInput
 Call **write_workflow_canvas** with a full valid JSON graph. On failure it returns \`success: false\`, \`error\` (summary), and **\`issues\`** (per-line problems). Fix **every** issue and call **write_workflow_canvas** again.`;
 
 const DEFAULT_MODEL = "gpt-5.4-mini";
+
+const REASONING_EFFORT_LEVELS = [
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+] as const;
+
+type ReasoningEffort = (typeof REASONING_EFFORT_LEVELS)[number];
+
+/** OpenAI Responses-style reasoning for supported planner models (see OPENAI_WORKFLOW_REASONING_EFFORT). */
+function buildOpenAiPlannerProviderOptions(): ProviderOptions | undefined {
+  const raw = process.env.OPENAI_WORKFLOW_REASONING_EFFORT?.trim().toLowerCase() ?? "";
+  const disable =
+    raw === "none" ||
+    raw === "off" ||
+    raw === "false" ||
+    raw === "0" ||
+    raw === "disabled";
+
+  let effort: ReasoningEffort | undefined;
+  if (disable) {
+    effort = undefined;
+  } else if (REASONING_EFFORT_LEVELS.includes(raw as ReasoningEffort)) {
+    effort = raw as ReasoningEffort;
+  } else {
+    effort = "medium";
+  }
+
+  if (!effort) return undefined;
+
+  const forceRaw = process.env.OPENAI_WORKFLOW_FORCE_REASONING?.trim();
+  const forceReasoning =
+    forceRaw === "1" || forceRaw?.toLowerCase() === "true";
+
+  return {
+    openai: {
+      reasoningEffort: effort,
+      ...(forceReasoning ? { forceReasoning: true as const } : {}),
+    },
+  };
+}
 
 /** Human-facing log line */
 function clipTelemetryLine(s: string, max = 280): string {
@@ -237,6 +287,7 @@ export async function generateWorkflowWithOpenAI(
   let terminalValidation: { error: string; issues: string[] } | null = null;
 
   const openai = createOpenAI({ apiKey: key });
+  const plannerProviderOptions = buildOpenAiPlannerProviderOptions();
 
   for (let round = 0; round < maxPlannerRounds && !resolvedWorkflow; round += 1) {
     if (round === 0) {
@@ -309,6 +360,7 @@ export async function generateWorkflowWithOpenAI(
       },
       stopWhen: ({ steps }) => innerResolved !== null || steps.length >= 24,
       temperature: 0.42,
+      ...(plannerProviderOptions ? { providerOptions: plannerProviderOptions } : {}),
       experimental_onToolCallStart: ({ toolCall }) => {
         const name = toolCall.toolName;
         if (name === "read_workflow_canvas") agentLog.push("Reading workflow JSON…");

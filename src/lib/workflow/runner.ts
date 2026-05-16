@@ -4,11 +4,13 @@ import {
   topologicalOrderPreferLeft,
 } from "./graph";
 import {
+  type GenerationPlan,
   incomingMediaLanes,
   outgoingMediaLanes,
   planGeneration,
 } from "./generation-plan";
 import type { WorkflowEdge, WorkflowNode } from "./schema";
+import { logWorkflow } from "./workflow-debug-log";
 
 export type RuntimeOutputs = Record<
   string,
@@ -55,6 +57,8 @@ export type NodeRunComplete = {
   total: number;
   label: string;
   output: RuntimeOutputs[string];
+  /** True when output was copied from {@link runWorkflowDAG} `reuseOutputs`. */
+  reused?: boolean;
 };
 
 function runLabel(node: WorkflowNode): string {
@@ -191,6 +195,67 @@ function collectUpstreamVideoUrl(
   return undefined;
 }
 
+/** Parse JSON bodies from `/api/fal/generation` (and raw fal-shaped errors). */
+function extractFalProxyErrorMessage(
+  body: Record<string, unknown>,
+  httpStatus: number,
+  rawText: string,
+): string {
+  const errStr = body.error;
+  if (typeof errStr === "string" && errStr.trim()) return errStr.trim();
+
+  const detail = body.detail;
+  if (typeof detail === "string" && detail.trim()) return detail.trim();
+  if (Array.isArray(detail)) {
+    const parts = detail.map((item: unknown) => {
+      if (!item || typeof item !== "object") return "";
+      const row = item as { msg?: unknown; loc?: unknown };
+      const loc = Array.isArray(row.loc)
+        ? row.loc.map(String).join(".")
+        : String(row.loc ?? "");
+      const m =
+        typeof row.msg === "string"
+          ? row.msg
+          : row.msg != null
+            ? JSON.stringify(row.msg)
+            : "";
+      return [loc, m].filter(Boolean).join(": ");
+    });
+    const joined = parts.filter(Boolean).join("; ").trim();
+    if (joined) return joined.slice(0, 6000);
+  }
+  if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+    const o = detail as Record<string, unknown>;
+    if (typeof o.message === "string" && o.message.trim()) {
+      return o.message.trim();
+    }
+    if (typeof o.msg === "string" && o.msg.trim()) return o.msg.trim();
+  }
+
+  const msg = body.message;
+  if (typeof msg === "string" && msg.trim()) return msg.trim();
+
+  const trimmed = rawText.trim();
+  if (trimmed.length > 0 && trimmed.length <= 16_000) {
+    return trimmed.slice(0, 6000);
+  }
+
+  return `Generation failed (${httpStatus})`;
+}
+
+function generationCacheSatisfiesPlan(
+  plan: GenerationPlan,
+  cached: Extract<RuntimeOutputs[string], { type: "generation" }>,
+): boolean {
+  if (plan.needPassthroughText && !cached.text?.trim()) return false;
+  if (plan.needCaption && !cached.text?.trim()) return false;
+  if (plan.needTextToImage && !cached.imageUrl) return false;
+  if (plan.needTextToVideo && !cached.videoUrl) return false;
+  if (plan.needImageToVideo && !cached.videoUrl) return false;
+  if (plan.needVideoToVideo && !cached.videoUrl) return false;
+  return true;
+}
+
 export async function runWorkflowDAG(
   nodes: WorkflowNode[],
   edges: WorkflowEdge[],
@@ -198,13 +263,26 @@ export async function runWorkflowDAG(
     onProgress?: (p: RunProgress) => void;
     /** Fires after each node’s output is ready (same order as execution). */
     onNodeComplete?: (e: NodeRunComplete) => void;
+    /** Outputs from an earlier run; generation blocks reuse when still valid for current wiring. */
+    reuseOutputs?: RuntimeOutputs;
   } = {},
 ): Promise<RuntimeOutputs> {
   if (nodes.length === 0) {
     throw new GraphError("Add at least one node before running");
   }
 
-  const { onProgress, onNodeComplete } = options;
+  const { onProgress, onNodeComplete, reuseOutputs: reuseOutputsRaw } = options;
+  const reuseOutputs =
+    reuseOutputsRaw && Object.keys(reuseOutputsRaw).length > 0
+      ? reuseOutputsRaw
+      : undefined;
+
+  logWorkflow("info", "runner", "Workflow DAG run started", {
+    nodes: nodes.length,
+    edges: edges.length,
+    reuseCandidates: reuseOutputs ? Object.keys(reuseOutputs).length : 0,
+  });
+
   assertConnectedDAG(nodes, edges);
   const order = topologicalOrderPreferLeft(nodes, edges);
   const totalSteps = order.length;
@@ -231,6 +309,14 @@ export async function runWorkflowDAG(
       step: { index: step + 1, total: totalSteps, nodeId: id },
     });
 
+    logWorkflow("debug", "runner/node", "Visit node", {
+      step: step + 1,
+      total: totalSteps,
+      nodeId: id,
+      kind: data.kind,
+      label,
+    });
+
     switch (data.kind) {
       case "mediaInput":
         outputs[id] = {
@@ -252,6 +338,29 @@ export async function runWorkflowDAG(
         const outL = outgoingMediaLanes(id, edges);
         const plan = planGeneration(inL, outL);
 
+        if (reuseOutputs) {
+          const cached = reuseOutputs[id];
+          if (
+            cached?.type === "generation" &&
+            generationCacheSatisfiesPlan(plan, cached)
+          ) {
+            outputs[id] = cached;
+            logWorkflow("info", "runner/node", "Skipped generation (reused prior output)", {
+              nodeId: id,
+              label,
+            });
+            onNodeComplete?.({
+              nodeId: id,
+              index: step + 1,
+              total: totalSteps,
+              label,
+              output: cached,
+              reused: true,
+            });
+            break;
+          }
+        }
+
         const promptNotes = collectUpstreamText(id, incomingByTarget, outputs).trim();
         const promptBody =
           promptNotes +
@@ -267,20 +376,52 @@ export async function runWorkflowDAG(
           promptBody.trim() !== "" ? promptBody.trim().slice(0, 5000) : undefined;
 
         async function postGeneration(body: Record<string, unknown>) {
+          const intent =
+            typeof body.intent === "string" ? body.intent : "unknown";
+          logWorkflow("info", "runner/fal", "Calling /api/fal/generation", {
+            intent,
+            promptChars:
+              typeof body.prompt === "string" ? body.prompt.length : undefined,
+            durationSec: body.durationSec,
+            duration: body.duration,
+            resolution: body.resolution,
+          });
           const res = await fetch("/api/fal/generation", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
           });
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new GraphError(
-              typeof err?.error === "string"
-                ? err.error
-                : `Generation failed (${res.status})`,
-            );
+          const rawText = await res.text();
+          let parsedBody: Record<string, unknown> = {};
+          try {
+            const p = JSON.parse(rawText) as unknown;
+            if (p && typeof p === "object" && !Array.isArray(p)) {
+              parsedBody = p as Record<string, unknown>;
+            }
+          } catch {
+            /* non-JSON error page */
           }
-          return res.json() as Promise<Record<string, unknown>>;
+
+          if (!res.ok) {
+            const msg = extractFalProxyErrorMessage(
+              parsedBody,
+              res.status,
+              rawText,
+            );
+            logWorkflow("error", "runner/fal", "Generation HTTP error", {
+              intent,
+              httpStatus: res.status,
+              message: msg.slice(0, 4000),
+              rawPreview: rawText.slice(0, 2000),
+              parsedKeys:
+                Object.keys(parsedBody).length > 0
+                  ? Object.keys(parsedBody).join(",")
+                  : "(none)",
+            });
+            throw new GraphError(msg);
+          }
+
+          return parsedBody as Record<string, unknown>;
         }
 
         let textOut: string | undefined;
@@ -414,7 +555,13 @@ export async function runWorkflowDAG(
           const files: { path: string; blob: Blob }[] = [];
           if (imageUrlsAll[0]) {
             const imgRes = await fetch(imageUrlsAll[0]);
-            if (!imgRes.ok) throw new GraphError("Failed to download image for export");
+            if (!imgRes.ok) {
+              logWorkflow("error", "runner/export", "YouTube image fetch failed", {
+                nodeId: id,
+                httpStatus: imgRes.status,
+              });
+              throw new GraphError("Failed to download image for export");
+            }
             files.push({
               path: `platforms/youtube/creative.png`,
               blob: await imgRes.blob(),
@@ -422,7 +569,13 @@ export async function runWorkflowDAG(
           }
           if (videoUrl) {
             const vr = await fetch(videoUrl);
-            if (!vr.ok) throw new GraphError("Failed to download video for export");
+            if (!vr.ok) {
+              logWorkflow("error", "runner/export", "YouTube video fetch failed", {
+                nodeId: id,
+                httpStatus: vr.status,
+              });
+              throw new GraphError("Failed to download video for export");
+            }
             files.push({
               path: `platforms/youtube/creative.mp4`,
               blob: await vr.blob(),
@@ -474,7 +627,14 @@ export async function runWorkflowDAG(
 
         const primary = httpsImages[0];
         const imgRes = await fetch(primary);
-        if (!imgRes.ok) throw new GraphError("Failed to download image for export");
+        if (!imgRes.ok) {
+          logWorkflow("error", "runner/export", "Meta/TikTok image fetch failed", {
+            nodeId: id,
+            platform: data.platform,
+            httpStatus: imgRes.status,
+          });
+          throw new GraphError("Failed to download image for export");
+        }
         const blob = await imgRes.blob();
         const manifest = {
           platform: data.platform,
@@ -525,6 +685,9 @@ export async function runWorkflowDAG(
   }
 
   onProgress?.({ phase: "done" });
+  logWorkflow("info", "runner", "Workflow DAG run finished", {
+    outputNodes: Object.keys(outputs).length,
+  });
   return outputs;
 }
 

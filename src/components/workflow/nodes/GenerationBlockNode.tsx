@@ -271,7 +271,7 @@ export function GenerationBlockNode(props: NodeProps<AppNode>) {
                         })
                       }
                     >
-                      {[2, 3, 4, 5].map((s) => (
+                      {Array.from({ length: 14 }, (_, i) => i + 2).map((s) => (
                         <option key={s} value={String(s)}>
                           {s} seconds
                         </option>
