@@ -58,7 +58,13 @@ const planExportStageSchema = z.object({
   platform: z.enum(["youtube", "facebook", "instagram", "tiktok"]),
   /** Default: mediaInput stage id if omitted and a single mediaInput exists */
   copyFromStageId: z.string().optional(),
+  /** Primary image source for export (also use moreImageFromStageIds for extra wired images). */
   imageFromStageId: z.string().optional(),
+  /**
+   * Additional generation stages (each must output image) wired into the same export image pin.
+   * Use for multi-subject carousels / grids so each block stays editable on the canvas.
+   */
+  moreImageFromStageIds: z.array(z.string().min(1)).optional(),
   videoFromStageId: z.string().optional(),
 });
 
@@ -80,6 +86,110 @@ export const workflowPlanSchema = z.object({
 });
 
 export type WorkflowPlan = z.infer<typeof workflowPlanSchema>;
+
+/**
+ * Repair common LLM mistakes before Zod (wrong kind casing, platform: "copy", string outputs, missing version).
+ */
+export function normalizeWorkflowPlanRaw(input: unknown): unknown {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) return input;
+  const o = input as Record<string, unknown>;
+  const out: Record<string, unknown> = { ...o };
+
+  if (out.version === undefined || out.version === null || out.version === "") {
+    out.version = 1;
+  } else if (typeof out.version === "string") {
+    let s = out.version.trim().toLowerCase();
+    if (s.startsWith("v")) s = s.slice(1);
+    if (s === "1" || s === "1.0") out.version = 1;
+  }
+
+  if (!Array.isArray(out.stages)) return out;
+  out.stages = out.stages.map((st) => normalizeWorkflowPlanStageRaw(st));
+  return out;
+}
+
+function normalizeWorkflowPlanStageRaw(st: unknown): unknown {
+  if (st === null || typeof st !== "object" || Array.isArray(st)) return st;
+  const s: Record<string, unknown> = { ...(st as Record<string, unknown>) };
+
+  if (typeof s.kind === "string") {
+    const lower = s.kind.trim().toLowerCase().replace(/[\s_-]+/g, "");
+    const kindAliases: Record<string, "mediaInput" | "generation" | "platformExport"> = {
+      mediainput: "mediaInput",
+      mediain: "mediaInput",
+      mediaingest: "mediaInput",
+      ingest: "mediaInput",
+      input: "mediaInput",
+      campaigninput: "mediaInput",
+      generation: "generation",
+      gen: "generation",
+      generate: "generation",
+      generator: "generation",
+      diffusion: "generation",
+      imagegen: "generation",
+      platformexport: "platformExport",
+      export: "platformExport",
+      platform: "platformExport",
+      output: "platformExport",
+      destination: "platformExport",
+      publish: "platformExport",
+    };
+    if (kindAliases[lower]) s.kind = kindAliases[lower];
+  }
+
+  const kindStr = typeof s.kind === "string" ? s.kind : "";
+  if (!["mediaInput", "generation", "platformExport"].includes(kindStr)) {
+    const t = s.type;
+    if (typeof t === "string") {
+      const tl = t.trim().toLowerCase().replace(/[\s_-]+/g, "");
+      if (tl === "media" || tl === "mediainput") s.kind = "mediaInput";
+      else if (tl === "generation" || tl === "gen") s.kind = "generation";
+      else if (tl === "export" || tl === "output" || tl === "platformexport") s.kind = "platformExport";
+    }
+  }
+
+  if (s.kind === "generation") {
+    if (typeof s.outputs === "string" && s.outputs.trim()) {
+      s.outputs = [s.outputs.trim()];
+    }
+  }
+
+  if (s.kind === "platformExport" && typeof s.platform === "string") {
+    const pl = s.platform.trim().toLowerCase();
+    const fixPlatform: Record<string, "youtube" | "facebook" | "instagram" | "tiktok"> = {
+      ig: "instagram",
+      insta: "instagram",
+      instagram: "instagram",
+      fb: "facebook",
+      facebook: "facebook",
+      meta: "facebook",
+      yt: "youtube",
+      youtube: "youtube",
+      tiktok: "tiktok",
+      tt: "tiktok",
+    };
+    if (fixPlatform[pl]) {
+      s.platform = fixPlatform[pl];
+    } else if (pl === "copy" || pl === "caption" || pl === "text" || pl === "description") {
+      s.platform = "instagram";
+      if (typeof s.copyFromStageId !== "string" || !String(s.copyFromStageId).trim()) {
+        s.copyFromStageId = "media";
+      }
+    }
+  }
+
+  if (s.kind === "platformExport" && s.moreImageFromStageIds != null && !Array.isArray(s.moreImageFromStageIds)) {
+    if (typeof s.moreImageFromStageIds === "string" && s.moreImageFromStageIds.trim()) {
+      s.moreImageFromStageIds = [s.moreImageFromStageIds.trim()];
+    }
+  }
+
+  return s;
+}
+
+export function safeParseWorkflowPlan(data: unknown) {
+  return workflowPlanSchema.safeParse(normalizeWorkflowPlanRaw(data));
+}
 
 type EdgeSpec = {
   fromStageId: string;
@@ -176,10 +286,16 @@ function collectEdgeSpecs(plan: WorkflowPlan): EdgeSpec[] {
         }
       }
       if (other.kind === "platformExport") {
-        if (other.imageFromStageId === st.id && !outSet.has("image")) {
-          throw new GraphError(
-            `Stage "${st.id}" must list "image" in outputs because export uses it as imageFromStageId`,
-          );
+        const imageRefs = [
+          ...(other.imageFromStageId ? [other.imageFromStageId] : []),
+          ...(other.moreImageFromStageIds ?? []),
+        ];
+        for (const refId of imageRefs) {
+          if (refId === st.id && !outSet.has("image")) {
+            throw new GraphError(
+              `Stage "${st.id}" must list "image" in outputs because export references it for images`,
+            );
+          }
         }
         if (other.videoFromStageId === st.id && !outSet.has("video")) {
           throw new GraphError(
@@ -204,12 +320,19 @@ function collectEdgeSpecs(plan: WorkflowPlan): EdgeSpec[] {
       targetHandle: "text",
     });
 
-    if (st.imageFromStageId) {
-      if (!byId.has(st.imageFromStageId)) {
-        throw new GraphError(`Unknown imageFromStageId "${st.imageFromStageId}"`);
+    const imageStageIds = [
+      ...(st.imageFromStageId ? [st.imageFromStageId] : []),
+      ...(st.moreImageFromStageIds ?? []),
+    ];
+    const seenImgStages = new Set<string>();
+    for (const imgId of imageStageIds) {
+      if (seenImgStages.has(imgId)) continue;
+      seenImgStages.add(imgId);
+      if (!byId.has(imgId)) {
+        throw new GraphError(`Unknown image stage id "${imgId}"`);
       }
       specs.push({
-        fromStageId: st.imageFromStageId,
+        fromStageId: imgId,
         toStageId: st.id,
         sourceHandle: "image",
         targetHandle: "image",
@@ -241,7 +364,7 @@ function collectEdgeSpecs(plan: WorkflowPlan): EdgeSpec[] {
   });
 }
 
-function buildIncomingByTarget(edges: WorkflowEdge[]): Map<string, WorkflowEdge[]> {
+export function buildIncomingByTarget(edges: WorkflowEdge[]): Map<string, WorkflowEdge[]> {
   const m = new Map<string, WorkflowEdge[]>();
   for (const e of edges) {
     const list = m.get(e.target) ?? [];

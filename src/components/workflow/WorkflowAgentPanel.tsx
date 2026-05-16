@@ -9,6 +9,8 @@ type AgentResponse = {
   source?: "openai" | "template";
   note?: string;
   error?: string;
+  /** Ordered planner actions (tool runs, retries) for the chat UI */
+  agentLog?: string[];
 };
 
 type ChatTurn = {
@@ -30,13 +32,14 @@ export function WorkflowAgentPanel({ onApplyDocument, onStatus }: WorkflowAgentP
   const [messages, setMessages] = useState<ChatTurn[]>([]);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  const [lastAgentLog, setLastAgentLog] = useState<string[] | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [messages, busy]);
+  }, [messages, busy, lastAgentLog]);
 
   const send = useCallback(async () => {
     const text = draft.trim();
@@ -51,7 +54,8 @@ export function WorkflowAgentPanel({ onApplyDocument, onStatus }: WorkflowAgentP
     setMessages((m) => [...m, userTurn]);
     setDraft("");
     setBusy(true);
-    onStatus("Generating workflow…");
+    setLastAgentLog(null);
+    onStatus("Contacting the workflow agent…");
 
     const apiPayload = [...priorForApi, { role: "user" as const, content: text }];
 
@@ -71,10 +75,22 @@ export function WorkflowAgentPanel({ onApplyDocument, onStatus }: WorkflowAgentP
         ]);
         return;
       }
+      if (body.agentLog?.length) {
+        setLastAgentLog(body.agentLog);
+        onStatus(body.agentLog[body.agentLog.length - 1] ?? null);
+      }
       if (!body.workflow) {
         const msg = "Agent returned no workflow";
-        onStatus(msg);
-        setMessages((m) => [...m, { id: cid(), role: "assistant", content: msg }]);
+        const tail = body.agentLog?.length ? body.agentLog[body.agentLog.length - 1] : null;
+        onStatus([msg, tail].filter(Boolean).join(" — "));
+        setMessages((m) => [
+          ...m,
+          {
+            id: cid(),
+            role: "assistant",
+            content: [msg, body.note].filter(Boolean).join("\n\n"),
+          },
+        ]);
         return;
       }
       await onApplyDocument(body.workflow);
@@ -137,6 +153,12 @@ export function WorkflowAgentPanel({ onApplyDocument, onStatus }: WorkflowAgentP
           Describe your campaign or changes here. Responses update the canvas; add blocks anytime with{" "}
           <span className="font-medium text-foreground">right‑click</span> on the canvas.
         </div>
+        {busy ? (
+          <div className="mr-3 rounded-lg border border-dashed border-border px-2.5 py-2 text-[10px] leading-snug text-muted-foreground">
+            Planning and validating on the server; if the schema fails, the agent retries with error details. A
+            step‑by‑step log appears below when the run finishes.
+          </div>
+        ) : null}
         {messages.map((m) => (
           <div
             key={m.id}
@@ -157,6 +179,16 @@ export function WorkflowAgentPanel({ onApplyDocument, onStatus }: WorkflowAgentP
             </div>
           </div>
         ))}
+        {lastAgentLog?.length ? (
+          <div className="mr-3 rounded-lg border border-border bg-background/90 px-2.5 py-2 text-[10px] leading-snug text-muted-foreground shadow-sm">
+            <p className="mb-1 font-semibold uppercase tracking-wide text-foreground/80">Agent activity</p>
+            <ul className="list-inside list-disc space-y-0.5">
+              {lastAgentLog.map((line, i) => (
+                <li key={`${i}-${line.slice(0, 24)}`}>{line}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </div>
 
       <div className="border-t border-border p-3">

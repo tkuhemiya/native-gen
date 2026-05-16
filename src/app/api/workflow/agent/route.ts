@@ -76,12 +76,15 @@ export async function POST(req: Request) {
   const hasOpenAI = Boolean(process.env.OPENAI_API_KEY?.trim());
 
   if (hasOpenAI) {
+    let plannerAgentLog: string[] | undefined;
     try {
       const result = await generateWorkflowWithOpenAI(dialog);
+      plannerAgentLog = result.agentLog;
       if (result.workflow) {
         return NextResponse.json({
           workflow: result.workflow,
           source: "openai" as const,
+          ...(plannerAgentLog?.length && { agentLog: plannerAgentLog }),
           ...(result.validationRepaired && {
             note: "Workflow produced after tool loop (lint/compile or retries).",
           }),
@@ -96,6 +99,7 @@ export async function POST(req: Request) {
       workflow: fallback,
       source: "template" as const,
       note: "Model output did not validate; applied keyword template instead.",
+      ...(plannerAgentLog?.length && { agentLog: plannerAgentLog }),
     });
   }
 
