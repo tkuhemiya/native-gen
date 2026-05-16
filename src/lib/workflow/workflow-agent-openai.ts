@@ -69,11 +69,43 @@ function draftToDocument(draft: z.infer<typeof AGENT_DRAFT_SCHEMA>): WorkflowDoc
   return validated.success ? validated.data : null;
 }
 
-export async function generateWorkflowWithOpenAI(userPrompt: string): Promise<WorkflowDocument | null> {
+export type WorkflowAgentDialogTurn = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+function compactDialog(dialog: WorkflowAgentDialogTurn[]): WorkflowAgentDialogTurn[] {
+  const maxChars = 12_000;
+  const out: WorkflowAgentDialogTurn[] = [];
+  let used = 0;
+  for (let i = dialog.length - 1; i >= 0; i -= 1) {
+    const t = dialog[i]!;
+    const content = t.content.trim().slice(0, 6000);
+    used += content.length;
+    if (used > maxChars) break;
+    out.push({ role: t.role, content });
+  }
+  return out.reverse();
+}
+
+/** Wrap a single prompt the same way the legacy `/api/workflow/agent` body `{ prompt }` did. */
+export function workflowAgentLegacyUserContent(prompt: string): string {
+  return `Build a workflow for this campaign request:\n\n${prompt.trim().slice(0, 6000)}`;
+}
+
+/** Build or refine a workflow from prior chat turns ending in a user message. */
+export async function generateWorkflowWithOpenAI(
+  dialog: WorkflowAgentDialogTurn[],
+): Promise<WorkflowDocument | null> {
   const key = process.env.OPENAI_API_KEY;
   if (!key?.trim()) return null;
 
   const model = process.env.OPENAI_WORKFLOW_MODEL?.trim() || "gpt-4o-mini";
+
+  const trimmedDialog = compactDialog(dialog);
+  if (trimmedDialog.length === 0) return null;
+  const last = trimmedDialog[trimmedDialog.length - 1]!;
+  if (last.role !== "user") return null;
 
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -84,13 +116,7 @@ export async function generateWorkflowWithOpenAI(userPrompt: string): Promise<Wo
     body: JSON.stringify({
       model,
       response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: SYSTEM },
-        {
-          role: "user",
-          content: `Build a workflow for this campaign request:\n\n${userPrompt.trim().slice(0, 6000)}`,
-        },
-      ],
+      messages: [{ role: "system", content: SYSTEM }, ...trimmedDialog],
       temperature: 0.35,
     }),
   });
