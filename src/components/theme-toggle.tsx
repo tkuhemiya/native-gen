@@ -21,7 +21,13 @@ export function ThemeToggle({ className = "" }: { className?: string }) {
       onClick={() => setTheme(isDark ? "light" : "dark")}
       className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-card text-foreground shadow-sm transition-colors hover:bg-accent ${className}`}
       aria-label="Toggle color theme"
-      title={isDark ? "Switch to light mode" : "Switch to dark mode"}
+      title={
+        mounted
+          ? isDark
+            ? "Switch to light mode"
+            : "Switch to dark mode"
+          : "Toggle color theme"
+      }
     >
       {!mounted ? (
         <span className="h-4 w-4" aria-hidden />

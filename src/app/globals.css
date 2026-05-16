@@ -184,3 +184,31 @@
     @apply bg-background text-foreground antialiased;
   }
 }
+
+/* React Flow chrome — follow app light/dark tokens via colorMode */
+.react-flow {
+  --xy-background-pattern-dots-color-default: var(--muted-foreground);
+  --xy-controls-button-background-color-default: var(--card);
+  --xy-controls-button-background-color-hover-default: var(--accent);
+  --xy-controls-button-color-default: var(--foreground);
+  --xy-controls-button-border-color-default: var(--border);
+  --xy-controls-box-shadow-default: var(--shadow-sm);
+  --xy-minimap-background-color-default: var(--card);
+  --xy-minimap-mask-background-color-default: color-mix(in oklch, var(--background) 55%, transparent);
+  --xy-minimap-node-background-color-default: var(--muted);
+  --xy-edge-stroke-default: var(--border);
+  --xy-edge-stroke-selected-default: var(--foreground);
+}
+
+.react-flow.dark {
+  --xy-background-pattern-dots-color-default: var(--muted-foreground);
+  --xy-controls-button-background-color-default: var(--card);
+  --xy-controls-button-background-color-hover-default: var(--accent);
+  --xy-controls-button-color-default: var(--foreground);
+  --xy-controls-button-border-color-default: var(--border);
+  --xy-minimap-background-color-default: var(--card);
+  --xy-minimap-mask-background-color-default: color-mix(in oklch, var(--background) 55%, transparent);
+  --xy-minimap-node-background-color-default: var(--muted);
+  --xy-edge-stroke-default: var(--border);
+  --xy-edge-stroke-selected-default: var(--foreground);
+}

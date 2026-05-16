@@ -18,6 +18,7 @@ import {
 } from "@xyflow/react";
 import { saveAs } from "file-saver";
 import JSZip from "jszip";
+import { useTheme } from "next-themes";
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -94,6 +95,15 @@ export function WorkflowEditor() {
   const [contextMenu, setContextMenu] = useState<FlowContextMenuState>({
     kind: "closed",
   });
+  const [themeMounted, setThemeMounted] = useState(false);
+  const { resolvedTheme } = useTheme();
+
+  useEffect(() => {
+    setThemeMounted(true);
+  }, []);
+
+  const flowColorMode =
+    themeMounted && resolvedTheme === "dark" ? "dark" : "light";
 
   const { screenToFlowPosition, viewportInitialized } = useReactFlow<
     AppNode,
@@ -696,6 +706,7 @@ export function WorkflowEditor() {
             onPaneContextMenu={onPaneContextMenu}
             onNodeContextMenu={onNodeContextMenu}
             nodeTypes={nodeTypes}
+            colorMode={flowColorMode}
             fitView
             proOptions={{ hideAttribution: true }}
           >
