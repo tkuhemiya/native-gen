@@ -1,6 +1,7 @@
 "use client";
 
 import { Handle, Position, useReactFlow, type NodeProps } from "@xyflow/react";
+import { saveAs } from "file-saver";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
@@ -24,6 +25,48 @@ async function fetchAccounts(): Promise<PublicAccountsStatus> {
   return res.json();
 }
 
+function isBundleMediaFile(f: { path: string; blob: Blob }): boolean {
+  if (f.blob.type === "application/json" || /\.json$/i.test(f.path)) {
+    return false;
+  }
+  return (
+    f.blob.type.startsWith("image/") ||
+    f.blob.type.startsWith("video/") ||
+    /\.(png|jpe?g|webp|gif|mp4|webm|mov)$/i.test(f.path)
+  );
+}
+
+function downloadName(path: string, index: number, blob: Blob): string {
+  const base = path.split("/").pop()?.trim() || "";
+  if (base) return base;
+  const ext = blob.type.startsWith("video/")
+    ? "mp4"
+    : blob.type.startsWith("image/")
+      ? "png"
+      : "bin";
+  return `output-${index + 1}.${ext}`;
+}
+
+function DownloadIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+    >
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" x2="12" y1="15" y2="3" />
+    </svg>
+  );
+}
+
 export function PlatformExportNode(props: NodeProps<AppNode>) {
   const { data, id } = props;
   const { updateNodeData } = useReactFlow();
@@ -33,40 +76,23 @@ export function PlatformExportNode(props: NodeProps<AppNode>) {
   const { activeNodeId, phase } = useWorkflowRunContext();
   const runningHere = phase === "running" && activeNodeId === id;
 
-  const bundlePreview = useMemo(() => {
-    if (runOut?.type !== "bundle") return null;
-    const img = runOut.files.find(
-      (f) =>
-        f.blob.type.startsWith("image/") ||
-        /\.(png|jpe?g|webp)$/i.test(f.path),
-    );
-    const vid = runOut.files.find(
-      (f) => f.blob.type.startsWith("video/") || /\.mp4$/i.test(f.path),
-    );
-    return { img, vid };
+  const mediaFiles = useMemo(() => {
+    if (runOut?.type !== "bundle") return [];
+    return runOut.files.filter(isBundleMediaFile);
   }, [runOut]);
 
-  const [objectUrl, setObjectUrl] = useState<string | null>(null);
-  useEffect(() => {
-    if (!bundlePreview?.img) {
-      setObjectUrl(null);
-      return;
-    }
-    const u = URL.createObjectURL(bundlePreview.img.blob);
-    setObjectUrl(u);
-    return () => URL.revokeObjectURL(u);
-  }, [bundlePreview?.img]);
+  const noMediaUrls = useMemo<string[]>(() => [], []);
+  const mediaUrls = useMemo(() => {
+    if (mediaFiles.length === 0) return noMediaUrls;
+    return mediaFiles.map((f) => URL.createObjectURL(f.blob));
+  }, [mediaFiles, noMediaUrls]);
 
-  const [videoObjectUrl, setVideoObjectUrl] = useState<string | null>(null);
   useEffect(() => {
-    if (!bundlePreview?.vid) {
-      setVideoObjectUrl(null);
-      return;
-    }
-    const u = URL.createObjectURL(bundlePreview.vid.blob);
-    setVideoObjectUrl(u);
-    return () => URL.revokeObjectURL(u);
-  }, [bundlePreview?.vid]);
+    const urls = mediaUrls;
+    return () => {
+      for (const u of urls) URL.revokeObjectURL(u);
+    };
+  }, [mediaUrls]);
 
   useEffect(() => {
     let cancelled = false;
@@ -94,7 +120,7 @@ export function PlatformExportNode(props: NodeProps<AppNode>) {
 
   return (
     <div
-      className={`relative min-w-[260px] rounded-lg border border-border bg-card px-3 py-2 text-card-foreground shadow-sm${
+      className={`relative min-w-[300px] max-w-[300px] rounded-lg border border-border bg-card px-3 py-2 text-card-foreground shadow-sm${
         runningHere ? " ring-2 ring-primary ring-offset-2 ring-offset-background" : ""
       }`}
     >
@@ -124,48 +150,70 @@ export function PlatformExportNode(props: NodeProps<AppNode>) {
           Output
         </span>
       </div>
-      <p className="mb-1 text-[10px] leading-snug text-muted-foreground">
-        Top: copy · Middle: image(s) · Bottom: video (YouTube https)
-      </p>
-      {runOut?.type === "bundle" ? (
-        <div className="mb-2 rounded-md border border-border bg-muted/40 p-2">
-          <p className="mb-1 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Final export
+
+      <div className="mb-2 max-h-[260px] overflow-y-auto pr-0.5">
+        {mediaFiles.length === 0 ? (
+          <p className="py-6 text-center text-[10px] leading-relaxed text-muted-foreground">
+            Run the workflow to show images and video from wired inputs here.
           </p>
-          <div className="flex flex-wrap gap-2">
-            {objectUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={objectUrl}
-                alt=""
-                className="h-24 max-w-[120px] rounded border border-border object-cover"
-              />
-            ) : null}
-            {videoObjectUrl ? (
-              <video
-                src={videoObjectUrl}
-                className="h-24 max-w-[160px] rounded border border-border object-cover"
-                muted
-                playsInline
-                controls
-              />
-            ) : null}
+        ) : (
+          <div className="columns-2 gap-2 [column-fill:_balance]">
+            {mediaFiles.map((file, i) => {
+              const src = mediaUrls[i];
+              if (!src) return null;
+              const isVid =
+                file.blob.type.startsWith("video/") || /\.mp4|webm|mov$/i.test(file.path);
+              const name = downloadName(file.path, i, file.blob);
+              return (
+                <div
+                  key={`${file.path}-${i}`}
+                  className="relative mb-2 break-inside-avoid rounded-md border border-border bg-muted/30"
+                >
+                  <button
+                    type="button"
+                    title="Download"
+                    aria-label={`Download ${name}`}
+                    className="nodrag nopan absolute right-1 top-1 z-20 flex h-7 w-7 items-center justify-center rounded-full border border-border bg-background/85 text-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-background"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      saveAs(file.blob, name);
+                    }}
+                  >
+                    <DownloadIcon className="h-3.5 w-3.5" />
+                  </button>
+                  {isVid ? (
+                    <video
+                      src={src}
+                      className="max-h-40 w-full rounded-md object-cover"
+                      muted
+                      playsInline
+                      controls
+                    />
+                  ) : (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={src}
+                      alt=""
+                      className="max-h-48 w-full rounded-md object-cover"
+                    />
+                  )}
+                </div>
+              );
+            })}
           </div>
-          {runOut.publish?.caption ? (
-            <p className="mt-1 line-clamp-4 text-[9px] text-muted-foreground">
-              {runOut.publish.caption}
-            </p>
-          ) : runOut.publishYoutube ? (
-            <p className="mt-1 text-[9px] text-muted-foreground">{runOut.publishYoutube.title}</p>
-          ) : null}
-        </div>
+        )}
+      </div>
+
+      {runOut?.type === "bundle" && runOut.publish?.caption ? (
+        <p className="mb-2 line-clamp-3 text-[9px] text-muted-foreground">
+          {runOut.publish.caption}
+        </p>
+      ) : runOut?.type === "bundle" && runOut.publishYoutube ? (
+        <p className="mb-2 line-clamp-2 text-[9px] text-muted-foreground">
+          {runOut.publishYoutube.title}
+        </p>
       ) : null}
-      <ol className="mb-2 list-decimal space-y-0.5 pl-4 text-[9px] leading-relaxed text-muted-foreground">
-        <li>Connect accounts in Social accounts (reconnect Meta after scope updates).</li>
-        <li>Pick platform + Page (Meta). Publish needs https images (wire from the generation image pin).</li>
-        <li>Run workflow, then Publish to Meta / YouTube in the header.</li>
-        <li>Demo tip: record a short screen capture as backup if Wi‑Fi fails.</li>
-      </ol>
+
       <label className="flex flex-col gap-1 text-[10px] text-muted-foreground">
         Platform
         <select
@@ -229,16 +277,13 @@ export function PlatformExportNode(props: NodeProps<AppNode>) {
             </p>
           ) : null}
           <p className="text-[9px] leading-relaxed text-muted-foreground">
-            After <strong className="font-medium text-foreground">Run workflow</strong>, use{" "}
-            <strong className="font-medium text-foreground">Publish to Meta</strong> in the header.
-            Images must be https (generation image pin). Wire multiple image edges for an Instagram carousel.
+            After <strong className="font-medium text-foreground">Run workflow</strong>, the bundle uses https images from the generation image pin. Wire multiple image edges for an Instagram carousel.
           </p>
         </div>
       ) : null}
       {data.platform === "youtube" ? (
         <p className="mt-2 text-[9px] leading-relaxed text-muted-foreground">
-          Wire the <strong className="font-medium text-foreground">video</strong> handle to a public https MP4,
-          then use <strong className="font-medium text-foreground">Publish to YouTube</strong> in the header.
+          Wire the <strong className="font-medium text-foreground">video</strong> handle to a public https MP4.
           Connect Google under Social accounts. Demo uploads respect{" "}
           <code className="rounded bg-muted px-0.5 text-[8px] text-foreground">
             NATIVE_GEN_YOUTUBE_MAX_BYTES

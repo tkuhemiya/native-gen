@@ -17,7 +17,6 @@ import {
   type NodeTypes,
 } from "@xyflow/react";
 import { saveAs } from "file-saver";
-import JSZip from "jszip";
 import { useTheme } from "next-themes";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
@@ -44,12 +43,7 @@ import {
   type WorkflowNode,
 } from "@/lib/workflow/schema";
 import { runWorkflowDAG, wrapError, type RuntimeOutputs } from "@/lib/workflow/runner";
-import {
-  buildWorkflowDebugLogExportJson,
-  clearPersistedWorkflowLogs,
-  clearWorkflowMemoryLog,
-  logWorkflow,
-} from "@/lib/workflow/workflow-debug-log";
+import { logWorkflow } from "@/lib/workflow/workflow-debug-log";
 import { areWorkflowHandlesCompatible } from "@/lib/workflow/workflow-connection";
 import {
   clearLastLoadedWorkflowId,
@@ -63,7 +57,6 @@ import {
   saveWorkflowDoc,
   setLastLoadedWorkflowId,
 } from "@/lib/workflow/storage";
-import { zipRuntimeOutputs } from "@/lib/workflow/zip-outputs";
 import { normalizeWorkflowDocument } from "@/lib/workflow/migrate";
 import { estimateWorkflowFalUsd } from "@/lib/workflow/estimate-workflow-fal-usd";
 
@@ -92,19 +85,6 @@ function rfEdgesToWorkflow(edges: Edge[]): WorkflowEdge[] {
   }));
 }
 
-function filterOutputsForCurrentGraph(
-  outputs: RuntimeOutputs | null,
-  workflowNodes: WorkflowNode[],
-): RuntimeOutputs {
-  if (!outputs) return {};
-  const ids = new Set(workflowNodes.map((n) => n.id));
-  const next: RuntimeOutputs = {};
-  for (const [nid, out] of Object.entries(outputs)) {
-    if (ids.has(nid)) next[nid] = out;
-  }
-  return next;
-}
-
 type FlowContextMenuState =
   | { kind: "closed" }
   | {
@@ -127,57 +107,6 @@ export function WorkflowEditor() {
   const [liveOutputs, setLiveOutputs] = useState<RuntimeOutputs | null>(null);
   const [runPhase, setRunPhase] = useState<WorkflowRunPhase>("idle");
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
-
-  const metaPublishCandidates = useMemo(() => {
-    if (!lastOutputs) return [] as AppNode[];
-    return nodes.filter((n) => {
-      if (n.data.kind !== "platformExport") return false;
-      if (n.data.platform !== "facebook" && n.data.platform !== "instagram") return false;
-      if (!n.data.metaPageId?.trim()) return false;
-      const o = lastOutputs[n.id];
-      return o?.type === "bundle" && o.publish != null;
-    });
-  }, [nodes, lastOutputs]);
-
-  const canPublishMeta = metaPublishCandidates.length > 0;
-
-  const [metaPublishTargetId, setMetaPublishTargetId] = useState<string | null>(null);
-  useEffect(() => {
-    if (metaPublishCandidates.length === 0) {
-      setMetaPublishTargetId(null);
-      return;
-    }
-    setMetaPublishTargetId((prev) =>
-      prev && metaPublishCandidates.some((c) => c.id === prev)
-        ? prev
-        : metaPublishCandidates[0]!.id,
-    );
-  }, [metaPublishCandidates]);
-
-  const youtubePublishCandidates = useMemo(() => {
-    if (!lastOutputs) return [] as AppNode[];
-    return nodes.filter((n) => {
-      if (n.data.kind !== "platformExport") return false;
-      if (n.data.platform !== "youtube") return false;
-      const o = lastOutputs[n.id];
-      return o?.type === "bundle" && o.publishYoutube != null;
-    });
-  }, [nodes, lastOutputs]);
-
-  const canPublishYoutube = youtubePublishCandidates.length > 0;
-
-  const [youtubePublishTargetId, setYoutubePublishTargetId] = useState<string | null>(null);
-  useEffect(() => {
-    if (youtubePublishCandidates.length === 0) {
-      setYoutubePublishTargetId(null);
-      return;
-    }
-    setYoutubePublishTargetId((prev) =>
-      prev && youtubePublishCandidates.some((c) => c.id === prev)
-        ? prev
-        : youtubePublishCandidates[0]!.id,
-    );
-  }, [youtubePublishCandidates]);
 
   const importRef = useRef<HTMLInputElement>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
@@ -215,13 +144,6 @@ export function WorkflowEditor() {
     }),
     [lastOutputs, liveOutputs, activeNodeId, runPhase],
   );
-
-  const resumeCheckpoint = useMemo(
-    () => filterOutputsForCurrentGraph(lastOutputs, rfNodesToWorkflow(nodes)),
-    [lastOutputs, nodes],
-  );
-  const canResumeWorkflow =
-    runPhase !== "running" && Object.keys(resumeCheckpoint).length > 0;
 
   const closeContextMenu = useCallback(() => {
     setContextMenu({ kind: "closed" });
@@ -664,32 +586,19 @@ export function WorkflowEditor() {
     await refreshLibrary();
   };
 
-  const runGraph = async (mode: "full" | "resume") => {
+  const runGraph = async () => {
     const workflowNodes = rfNodesToWorkflow(nodes);
-    const reuseFiltered =
-      mode === "resume"
-        ? filterOutputsForCurrentGraph(lastOutputs, workflowNodes)
-        : {};
 
-    logWorkflow(
-      "info",
-      "WorkflowEditor",
-      mode === "resume" ? "Resume workflow" : "Run workflow",
-      {
-        workflowId,
-        workflowName,
-        mode,
-        reuseNodeIds:
-          mode === "resume" ? Object.keys(reuseFiltered) : [],
-      },
-    );
+    logWorkflow("info", "WorkflowEditor", "Run workflow", {
+      workflowId,
+      workflowName,
+    });
 
-    setStatus(mode === "resume" ? "Resuming…" : "Running…");
+    setStatus("Running…");
     outputsSnapshotBeforeRunRef.current = lastOutputs ? { ...lastOutputs } : null;
-    partialRunOutputsRef.current =
-      mode === "resume" ? { ...reuseFiltered } : {};
+    partialRunOutputsRef.current = {};
     setLastOutputs(null);
-    setLiveOutputs(mode === "resume" ? { ...reuseFiltered } : {});
+    setLiveOutputs({});
     setRunPhase("running");
     setActiveNodeId(null);
     try {
@@ -697,10 +606,6 @@ export function WorkflowEditor() {
         workflowNodes,
         rfEdgesToWorkflow(edges),
         {
-          reuseOutputs:
-            mode === "resume" && Object.keys(reuseFiltered).length > 0
-              ? reuseFiltered
-              : undefined,
           onProgress: (p) => setStatus(p.message ?? p.phase),
           onNodeComplete: (e) => {
             partialRunOutputsRef.current = {
@@ -719,7 +624,7 @@ export function WorkflowEditor() {
       setLiveOutputs(outputs);
       setActiveNodeId(null);
       setRunPhase("done");
-      setStatus(mode === "resume" ? "Resume finished" : "Run finished");
+      setStatus("Run finished");
       logWorkflow("info", "WorkflowEditor", "Run finished OK", {
         outputNodes: Object.keys(outputs).length,
       });
@@ -731,7 +636,7 @@ export function WorkflowEditor() {
       ).then(({ count }) => {
         if (count > 0) {
           setStatus(
-            `${mode === "resume" ? "Resume" : "Run"} finished — saved ${count} file(s) (media in IndexedDB; text snippets mirrored to localStorage).`,
+            `Run finished — saved ${count} file(s) (media in IndexedDB; text snippets mirrored to localStorage).`,
           );
         }
       });
@@ -759,387 +664,120 @@ export function WorkflowEditor() {
     }
   };
 
-  const downloadWorkflowDebugLog = useCallback(async () => {
-    try {
-      const json = await buildWorkflowDebugLogExportJson();
-      const blob = new Blob([json], {
-        type: "application/json;charset=utf-8",
-      });
-      const slug =
-        workflowName.replace(/\s+/g, "-").toLowerCase() || "workflow";
-      saveAs(blob, `${slug}-workflow-debug-log.json`);
-      setStatus("Exported workflow debug log (console + IndexedDB history)");
-    } catch {
-      setStatus("Could not export debug log.");
-    }
-  }, [workflowName]);
-
-  const clearWorkflowDebugLogsAll = useCallback(async () => {
-    await clearPersistedWorkflowLogs();
-    clearWorkflowMemoryLog();
-    setStatus("Cleared workflow debug log buffer");
-  }, []);
-
-  const downloadAllGenerated = useCallback(async () => {
-    if (!lastOutputs) {
-      setStatus("Run the workflow first.");
-      return;
-    }
-    setStatus("Building ZIP of all media…");
-    try {
-      const blob = await zipRuntimeOutputs(
-        lastOutputs,
-        workflowName.replace(/\s+/g, "-").toLowerCase() || "workflow",
-      );
-      const slug = workflowName.replace(/\s+/g, "-").toLowerCase();
-      saveAs(blob, `${slug}-all-media.zip`);
-      setStatus("Downloaded all media");
-    } catch {
-      setStatus("Could not build media ZIP.");
-    }
-  }, [lastOutputs, workflowName]);
-
-  const downloadZip = async () => {
-    if (!lastOutputs) {
-      setStatus("Run the workflow before downloading a ZIP.");
-      return;
-    }
-    const zip = new JSZip();
-    for (const out of Object.values(lastOutputs)) {
-      if (out.type === "bundle") {
-        for (const file of out.files) {
-          zip.file(file.path, file.blob);
-        }
-      }
-    }
-    if (Object.keys(zip.files).length === 0) {
-      setStatus("Nothing to ZIP — add a Platform export node.");
-      return;
-    }
-    zip.file(
-      "manifest.json",
-      new Blob(
-        [
-          JSON.stringify(
-            {
-              workflowId,
-              workflowName,
-              generatedAt: new Date().toISOString(),
-            },
-            null,
-            2,
-          ),
-        ],
-        { type: "application/json" },
-      ),
-    );
-    const blob = await zip.generateAsync({ type: "blob" });
-    const slug = workflowName.replace(/\s+/g, "-").toLowerCase();
-    saveAs(blob, `${slug}-export.zip`);
-    setStatus("ZIP downloaded");
-  };
-
-  const publishMeta = async () => {
-    if (!lastOutputs) {
-      setStatus("Run the workflow first.");
-      return;
-    }
-    const exportNode = metaPublishTargetId
-      ? nodes.find((n) => n.id === metaPublishTargetId)
-      : undefined;
-    const resolved =
-      exportNode &&
-      exportNode.data.kind === "platformExport" &&
-      (exportNode.data.platform === "facebook" || exportNode.data.platform === "instagram")
-        ? exportNode
-        : metaPublishCandidates[0];
-
-    if (!resolved || resolved.data.kind !== "platformExport") {
-      setStatus("Select Facebook or Instagram, choose a Page on the export node, then run.");
-      return;
-    }
-    const out = lastOutputs[resolved.id];
-    if (out?.type !== "bundle" || !out.publish) {
-      setStatus("Nothing to publish — run the workflow again.");
-      return;
-    }
-    setStatus("Publishing…");
-    try {
-      const res = await fetch("/api/publish/meta", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          destination: resolved.data.platform,
-          pageId: resolved.data.metaPageId!,
-          imageUrls: out.publish.imageUrls,
-          caption: out.publish.caption,
-        }),
-      });
-      const body = (await res.json()) as {
-        error?: string;
-        permalink?: string | null;
-        ok?: boolean;
-        carousel?: boolean;
-        reqId?: string;
-      };
-      if (!res.ok) {
-        setStatus(body.error ?? "Publish failed.");
-        return;
-      }
-      const link = body.permalink ? ` ${body.permalink}` : "";
-      const carouselNote = body.carousel ? " (carousel)" : "";
-      setStatus(`Published to ${resolved.data.platform}${carouselNote}.${link}`);
-    } catch {
-      setStatus("Publish request failed.");
-    }
-  };
-
-  const publishYoutube = async () => {
-    if (!lastOutputs) {
-      setStatus("Run the workflow first.");
-      return;
-    }
-    const exportNode = youtubePublishTargetId
-      ? nodes.find((n) => n.id === youtubePublishTargetId)
-      : undefined;
-    const resolved =
-      exportNode &&
-      exportNode.data.kind === "platformExport" &&
-      exportNode.data.platform === "youtube"
-        ? exportNode
-        : youtubePublishCandidates[0];
-
-    if (!resolved || resolved.data.kind !== "platformExport") {
-      setStatus("Set platform to YouTube, wire a public https video URL, then run.");
-      return;
-    }
-    const out = lastOutputs[resolved.id];
-    if (out?.type !== "bundle" || !out.publishYoutube) {
-      setStatus("Nothing to upload — run workflow with a remote https video on the video handle.");
-      return;
-    }
-    const { videoUrl, title, description } = out.publishYoutube;
-    setStatus("Uploading to YouTube…");
-    try {
-      const res = await fetch("/api/publish/youtube", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          videoUrl,
-          title,
-          description,
-        }),
-      });
-      const body = (await res.json()) as {
-        error?: string;
-        watchUrl?: string;
-        ok?: boolean;
-      };
-      if (!res.ok) {
-        setStatus(body.error ?? "YouTube upload failed.");
-        return;
-      }
-      setStatus(body.watchUrl ? `YouTube: ${body.watchUrl}` : "Uploaded to YouTube.");
-    } catch {
-      setStatus("YouTube upload request failed.");
-    }
-  };
-
   return (
     <>
     <WorkflowRunProvider value={runContextValue}>
     <div className="flex h-[100dvh] flex-col bg-background text-foreground">
-      <header className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3 text-sm">
-        <div className="mr-auto flex min-w-[200px] flex-1 flex-col gap-1">
-          <label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Editor
-          </label>
-          <input
-            value={workflowName}
-            onChange={(e) => setWorkflowName(e.target.value)}
-            className="rounded-md border border-border bg-card px-2 py-1 text-sm text-card-foreground"
-          />
-        </div>
-        <div className="flex flex-1 flex-wrap items-end gap-2">
-          <div className="flex flex-col gap-1">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Library
-            </span>
-            <div className="flex items-center gap-1">
-              <select
-                className="min-w-0 flex-1 rounded-md border border-border bg-card px-2 py-1 text-xs text-card-foreground"
-                defaultValue=""
-                onChange={(e) => {
-                  const v = e.target.value;
-                  e.target.value = "";
-                  void loadFromLibrary(v);
-                }}
-              >
-                <option value="" disabled>
-                  Load saved…
-                </option>
-                {library.map((doc) => (
-                  <option key={doc.id} value={doc.id}>
-                    {doc.name}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                title="New campaign"
-                className="shrink-0 rounded-md border border-border bg-card px-2 py-1 text-sm font-semibold leading-none text-card-foreground hover:bg-accent"
-                onClick={createBlankWorkflow}
-              >
-                +
-              </button>
-            </div>
+      <header className="border-b border-border px-4 py-3 text-sm">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="flex min-w-0 flex-1 flex-col gap-1 sm:min-w-[12rem]">
+            <label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Editor
+            </label>
+            <input
+              value={workflowName}
+              onChange={(e) => setWorkflowName(e.target.value)}
+              className="w-full rounded-md border border-border bg-card px-2 py-1 text-sm text-card-foreground"
+            />
           </div>
-          <button
-            type="button"
-            className="rounded-md border border-border bg-card px-3 py-1 text-xs font-medium text-card-foreground hover:bg-accent"
-            onClick={() => void removeFromLibrary(workflowId)}
-          >
-            Delete current
-          </button>
-          <button
-            type="button"
-            className="rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90"
-            onClick={() => void runGraph("full")}
-          >
-            Run workflow
-          </button>
-          <button
-            type="button"
-            title="Reuse generation outputs from the last run and continue from the next node (fixes Fal charges / time)"
-            disabled={!canResumeWorkflow}
-            className="rounded-md border border-border bg-card px-3 py-1 text-xs font-medium text-card-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-            onClick={() => void runGraph("resume")}
-          >
-            Resume
-          </button>
-          {falRunCostEstimate?.ok ? (
-            <span
-              className="max-w-[160px] truncate text-[10px] text-muted-foreground"
-              title={falEstimateTooltip}
+          <div className="flex max-w-full shrink-0 flex-wrap items-end justify-end gap-2 lg:flex-nowrap">
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Library
+              </span>
+              <div className="flex items-center gap-1">
+                <select
+                  className="min-w-[8.5rem] max-w-[14rem] rounded-md border border-border bg-card px-2 py-1 text-xs text-card-foreground sm:min-w-[10rem]"
+                  defaultValue=""
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    e.target.value = "";
+                    void loadFromLibrary(v);
+                  }}
+                >
+                  <option value="" disabled>
+                    Load saved…
+                  </option>
+                  {library.map((doc) => (
+                    <option key={doc.id} value={doc.id}>
+                      {doc.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  title="New campaign"
+                  className="shrink-0 rounded-md border border-border bg-card px-2 py-1 text-sm font-semibold leading-none text-card-foreground hover:bg-accent"
+                  onClick={createBlankWorkflow}
+                >
+                  +
+                </button>
+              </div>
+            </div>
+            <button
+              type="button"
+              title="Delete current workflow"
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-card text-card-foreground hover:bg-accent"
+              onClick={() => void removeFromLibrary(workflowId)}
             >
-              Est. fal ~${falRunCostEstimate.totalUsd.toFixed(2)}
-            </span>
-          ) : falRunCostEstimate && !falRunCostEstimate.ok ? (
-            <span
-              className="max-w-[140px] truncate text-[10px] text-amber-600 dark:text-amber-500"
-              title={falEstimateTooltip}
+              <span className="sr-only">Delete current workflow</span>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+              >
+                <path d="M3 6h18" />
+                <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                <line x1="10" x2="10" y1="11" y2="17" />
+                <line x1="14" x2="14" y1="11" y2="17" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              className="rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+              onClick={() => void runGraph()}
             >
-              Cost est. unavailable
-            </span>
-          ) : null}
-          <button
-            type="button"
-            className="rounded-md border border-border bg-card px-3 py-1 text-xs font-medium text-card-foreground hover:bg-accent"
-            title="Download JSON merge of console workflow logs + IndexedDB (native-gen DB v3)"
-            onClick={() => void downloadWorkflowDebugLog()}
-          >
-            Export debug log
-          </button>
-          <button
-            type="button"
-            className="rounded-md border border-border bg-muted px-3 py-1 text-xs font-medium text-muted-foreground hover:bg-accent"
-            title="Clear persisted log ring buffer (IndexedDB) and in-memory tail"
-            onClick={() => void clearWorkflowDebugLogsAll()}
-          >
-            Clear logs
-          </button>
-          <button
-            type="button"
-            className="rounded-md border border-border bg-card px-3 py-1 text-xs font-medium text-card-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={!lastOutputs}
-            title="Zip all generated images, videos, inputs, and export files from the last run"
-            onClick={() => void downloadAllGenerated()}
-          >
-            Download all media
-          </button>
-          <button
-            type="button"
-            className="rounded-md border border-border bg-card px-3 py-1 text-xs font-medium text-card-foreground hover:bg-accent"
-            onClick={() => void downloadZip()}
-          >
-            Download ZIP
-          </button>
-          {metaPublishCandidates.length > 1 ? (
-            <select
-              className="max-w-[160px] rounded-md border border-border bg-card px-2 py-1 text-[10px] text-card-foreground"
-              value={metaPublishTargetId ?? ""}
-              onChange={(e) => setMetaPublishTargetId(e.target.value || null)}
-              title="Which Platform export node to post from"
+              Run workflow
+            </button>
+            <Link
+              href="/settings/connections"
+              className="rounded-md border border-border bg-card px-3 py-1 text-xs font-medium text-card-foreground hover:bg-accent"
             >
-              {metaPublishCandidates.map((n) => (
-                <option key={n.id} value={n.id}>
-                  {n.data.kind === "platformExport" ? n.data.label : n.id}
-                </option>
-              ))}
-            </select>
-          ) : null}
-          <button
-            type="button"
-            disabled={!canPublishMeta}
-            title={
-              canPublishMeta
-                ? "Post images to the selected Page or Instagram (2+ https images = IG carousel)"
-                : "Run with Facebook/Instagram export, select a Page, and use https image URLs (from generation)."
-            }
-            className="rounded-md border border-border bg-card px-3 py-1 text-xs font-medium text-card-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-            onClick={() => void publishMeta()}
-          >
-            Publish to Meta
-          </button>
-          {youtubePublishCandidates.length > 1 ? (
-            <select
-              className="max-w-[160px] rounded-md border border-border bg-card px-2 py-1 text-[10px] text-card-foreground"
-              value={youtubePublishTargetId ?? ""}
-              onChange={(e) => setYoutubePublishTargetId(e.target.value || null)}
-              title="Which YouTube export node to upload from"
-            >
-              {youtubePublishCandidates.map((n) => (
-                <option key={n.id} value={n.id}>
-                  {n.data.kind === "platformExport" ? n.data.label : n.id}
-                </option>
-              ))}
-            </select>
-          ) : null}
-          <button
-            type="button"
-            disabled={!canPublishYoutube}
-            title={
-              canPublishYoutube
-                ? "Upload the wired https video to your connected YouTube channel (demo size limits apply)."
-                : "YouTube: wire the bottom (video) handle to a remote https MP4, connect YouTube, then run."
-            }
-            className="rounded-md border border-border bg-card px-3 py-1 text-xs font-medium text-card-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-            onClick={() => void publishYoutube()}
-          >
-            Publish to YouTube
-          </button>
-          <Link
-            href="/settings/connections"
-            className="rounded-md border border-border bg-card px-3 py-1 text-xs font-medium text-card-foreground hover:bg-accent"
-          >
-            Social accounts
-          </Link>
-          <ThemeToggle />
-          <div
-            className="hidden max-w-[220px] flex-col gap-0.5 text-[9px] leading-tight text-muted-foreground lg:flex"
-            title="Wires must match pin types (text / image / video)"
-          >
-            <span className="font-semibold uppercase tracking-wide text-muted-foreground/90">
-              Pins
-            </span>
-            <span>
-              <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 align-middle" />{" "}
-              Text ·{" "}
-              <span className="inline-block h-2 w-2 rounded-full bg-sky-500 align-middle" />{" "}
-              Image ·{" "}
-              <span className="inline-block h-2 w-2 rounded-full bg-amber-500 align-middle" />{" "}
-              Video
-            </span>
+              Social accounts
+            </Link>
+            <ThemeToggle />
+            <div className="flex min-w-[4.5rem] shrink-0 flex-col items-end justify-end pb-0.5 text-right">
+              {falRunCostEstimate?.ok ? (
+                <span
+                  className="text-[10px] font-medium text-muted-foreground"
+                  title={falEstimateTooltip}
+                >
+                  Est. fal ~${falRunCostEstimate.totalUsd.toFixed(2)}
+                </span>
+              ) : falRunCostEstimate && !falRunCostEstimate.ok ? (
+                <span
+                  className="max-w-[7rem] text-[10px] leading-tight text-amber-600 dark:text-amber-500"
+                  title={falEstimateTooltip}
+                >
+                  Cost est. unavailable
+                </span>
+              ) : (
+                <span
+                  className="text-[10px] text-muted-foreground"
+                  title={falEstimateTooltip}
+                >
+                  Est. fal · …
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </header>
@@ -1164,7 +802,10 @@ export function WorkflowEditor() {
             onNodeContextMenu={onNodeContextMenu}
             nodeTypes={nodeTypes}
             colorMode={flowColorMode}
+            minZoom={0.06}
+            maxZoom={8}
             fitView
+            fitViewOptions={{ minZoom: 0.06, maxZoom: 8, padding: 0.12 }}
             proOptions={{ hideAttribution: true }}
           >
             <Background gap={18} size={1} variant={BackgroundVariant.Dots} />

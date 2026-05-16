@@ -6,7 +6,7 @@ import type { CanvasNodeType, WorkflowEdge, WorkflowNode } from "@/lib/workflow/
 export const NODE_ANCHOR: Record<CanvasNodeType, { w: number; h: number }> = {
   mediaInput: { w: 280, h: 312 },
   generationBlock: { w: 340, h: 340 },
-  platformExport: { w: 260, h: 320 },
+  platformExport: { w: 300, h: 380 },
 };
 
 /** Horizontal gap between columns (after widest node in the column). */

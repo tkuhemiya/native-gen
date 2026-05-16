@@ -21,6 +21,8 @@ const bodySchema = z
     messages: z.array(messageSchema).min(1).max(30).optional(),
     /** Current canvas so the agent can read/edit incrementally (full WorkflowDocument v3). */
     workflow: z.unknown().optional(),
+    /** When true (OpenAI path only), respond with NDJSON stream + final `result` line. */
+    stream: z.boolean().optional(),
   })
   .superRefine((data, ctx) => {
     const hasPrompt = Boolean(data.prompt?.trim());
@@ -85,6 +87,39 @@ export async function POST(req: Request) {
   }
 
   const hasOpenAI = Boolean(process.env.OPENAI_API_KEY?.trim());
+
+  if (hasOpenAI && parsed.data.stream) {
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const enc = new TextEncoder();
+        const send = (obj: unknown) => controller.enqueue(enc.encode(`${JSON.stringify(obj)}\n`));
+        try {
+          const result = await generateWorkflowWithOpenAI(dialog, {
+            canvasSnapshot,
+            streamSink: send,
+          });
+          send({
+            type: "result",
+            ...result,
+            ...(result.validationRepaired
+              ? { note: "Applied after the planner fixed validation details (you can ignore this)." }
+              : {}),
+          });
+        } catch (e) {
+          const message = e instanceof Error ? e.message : "OpenAI request failed";
+          send({ type: "result", workflow: null, error: message });
+        } finally {
+          controller.close();
+        }
+      },
+    });
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "application/x-ndjson; charset=utf-8",
+        "Cache-Control": "no-store",
+      },
+    });
+  }
 
   if (hasOpenAI) {
     let plannerAgentLog: string[] | undefined;
