@@ -11,20 +11,23 @@ import {
   ReactFlow,
   useEdgesState,
   useNodesState,
+  useReactFlow,
   type Connection,
   type Edge,
   type NodeTypes,
 } from "@xyflow/react";
 import { saveAs } from "file-saver";
 import JSZip from "jszip";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 
+import { FlowContextMenuPortal } from "@/components/workflow/FlowContextMenu";
 import { FalFluxSchnellNode } from "@/components/workflow/nodes/FalFluxSchnellNode";
 import { ImageInputNode } from "@/components/workflow/nodes/ImageInputNode";
 import { PlatformExportNode } from "@/components/workflow/nodes/PlatformExportNode";
 import { TextInputNode } from "@/components/workflow/nodes/TextInputNode";
 import { VideoInputNode } from "@/components/workflow/nodes/VideoInputNode";
 import type { AppNode } from "@/lib/workflow/app-node";
+import { topLeftForCenteredNode } from "@/lib/workflow/node-layout";
 import {
   WORKFLOW_DOCUMENT_VERSION,
   defaultNodeData,
@@ -69,6 +72,15 @@ function rfEdgesToWorkflow(edges: Edge[]): WorkflowEdge[] {
   }));
 }
 
+type FlowContextMenuState =
+  | { kind: "closed" }
+  | {
+      kind: "pane";
+      clientX: number;
+      clientY: number;
+    }
+  | { kind: "node"; clientX: number; clientY: number; nodeId: string };
+
 export function WorkflowEditor() {
   const [workflowName, setWorkflowName] = useState("Untitled campaign");
   const [workflowId, setWorkflowId] = useState(() => crypto.randomUUID());
@@ -79,6 +91,20 @@ export function WorkflowEditor() {
   const [lastOutputs, setLastOutputs] = useState<RuntimeOutputs | null>(null);
   const [suggestBrief, setSuggestBrief] = useState("");
   const importRef = useRef<HTMLInputElement>(null);
+  const contextMenuRef = useRef<HTMLDivElement | null>(null);
+  const paneFlowAnchorRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [contextMenu, setContextMenu] = useState<FlowContextMenuState>({
+    kind: "closed",
+  });
+
+  const { screenToFlowPosition, viewportInitialized } = useReactFlow<
+    AppNode,
+    Edge
+  >();
+
+  const closeContextMenu = useCallback(() => {
+    setContextMenu({ kind: "closed" });
+  }, []);
 
   const refreshLibrary = useCallback(async () => {
     setLibrary(await listWorkflowDocs());
@@ -118,6 +144,109 @@ export function WorkflowEditor() {
     }, 1400);
     return () => window.clearTimeout(handle);
   }, [saveNow]);
+
+  useEffect(() => {
+    if (contextMenu.kind === "closed") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeContextMenu();
+    };
+    const onPointer = (e: PointerEvent) => {
+      if (contextMenuRef.current?.contains(e.target as globalThis.Node)) return;
+      closeContextMenu();
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("pointerdown", onPointer, true);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerdown", onPointer, true);
+    };
+  }, [contextMenu.kind, closeContextMenu]);
+
+  const onPaneContextMenu = useCallback(
+    (e: ReactMouseEvent<Element> | MouseEvent) => {
+      e.preventDefault();
+      if (!viewportInitialized) return;
+      const flow = screenToFlowPosition({
+        x: e.clientX,
+        y: e.clientY,
+      });
+      paneFlowAnchorRef.current = { x: flow.x, y: flow.y };
+      setContextMenu({
+        kind: "pane",
+        clientX: e.clientX,
+        clientY: e.clientY,
+      });
+    },
+    [screenToFlowPosition, viewportInitialized],
+  );
+
+  const onNodeContextMenu = useCallback(
+    (e: ReactMouseEvent, node: AppNode) => {
+      e.preventDefault();
+      setContextMenu({
+        kind: "node",
+        clientX: e.clientX,
+        clientY: e.clientY,
+        nodeId: node.id,
+      });
+    },
+    [],
+  );
+
+  const onPaneClick = useCallback(() => {
+    closeContextMenu();
+  }, [closeContextMenu]);
+
+  const addBlockAtCursor = useCallback(
+    (type: CanvasNodeType) => {
+      const { x: cx, y: cy } = paneFlowAnchorRef.current;
+      const id = crypto.randomUUID();
+      const data = defaultNodeData(type);
+      const position = topLeftForCenteredNode({ x: cx, y: cy }, type);
+      setNodes((nds) => [...nds, { id, type, position, data }]);
+      setStatus(`Added ${type}`);
+      closeContextMenu();
+    },
+    [closeContextMenu, setNodes],
+  );
+
+  const duplicateContextNode = useCallback(
+    (nodeId: string) => {
+      const node = nodes.find((n) => n.id === nodeId);
+      if (!node) {
+        closeContextMenu();
+        return;
+      }
+      const newId = crypto.randomUUID();
+      setNodes((nds) => [
+        ...nds,
+        {
+          id: newId,
+          type: node.type,
+          position: {
+            x: node.position.x + 48,
+            y: node.position.y + 48,
+          },
+          data: structuredClone(node.data),
+        },
+      ]);
+      setStatus("Duplicated node");
+      closeContextMenu();
+    },
+    [closeContextMenu, nodes, setNodes],
+  );
+
+  const deleteContextNode = useCallback(
+    (nodeId: string) => {
+      setEdges((eds) =>
+        eds.filter((e) => e.source !== nodeId && e.target !== nodeId),
+      );
+      setNodes((nds) => nds.filter((n) => n.id !== nodeId));
+      setStatus("Deleted node");
+      closeContextMenu();
+    },
+    [closeContextMenu, setEdges, setNodes],
+  );
 
   const onConnect = useCallback(
     (params: Connection) =>
@@ -403,6 +532,7 @@ export function WorkflowEditor() {
   };
 
   return (
+    <>
     <div className="flex h-[100dvh] flex-col bg-zinc-50 text-black dark:bg-black dark:text-zinc-50">
       <header className="flex flex-wrap items-center gap-2 border-b border-black/10 px-4 py-3 text-sm dark:border-white/10">
         <div className="mr-auto flex min-w-[200px] flex-1 flex-col gap-1">
@@ -580,6 +710,9 @@ export function WorkflowEditor() {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
+            onPaneClick={onPaneClick}
+            onPaneContextMenu={onPaneContextMenu}
+            onNodeContextMenu={onNodeContextMenu}
             nodeTypes={nodeTypes}
             fitView
             proOptions={{ hideAttribution: true }}
@@ -600,5 +733,28 @@ export function WorkflowEditor() {
         ) : null}
       </footer>
     </div>
+    <FlowContextMenuPortal
+      menu={
+        contextMenu.kind === "closed"
+          ? null
+          : contextMenu.kind === "pane"
+            ? {
+                kind: "pane",
+                clientX: contextMenu.clientX,
+                clientY: contextMenu.clientY,
+              }
+            : {
+                kind: "node",
+                clientX: contextMenu.clientX,
+                clientY: contextMenu.clientY,
+                nodeId: contextMenu.nodeId,
+              }
+      }
+      menuRef={contextMenuRef}
+      onAddBlock={addBlockAtCursor}
+      onDuplicateNode={duplicateContextNode}
+      onDeleteNode={deleteContextNode}
+    />
+    </>
   );
 }
