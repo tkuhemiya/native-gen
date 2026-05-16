@@ -1,7 +1,7 @@
 import { falFluxPresetSizeSchema } from "@/lib/fal/text-to-image-config";
 import { z } from "zod";
 
-export const WORKFLOW_DOCUMENT_VERSION = 2 as const;
+export const WORKFLOW_DOCUMENT_VERSION = 3 as const;
 
 const mediaAssetSchema = z.object({
   dataUrl: z.string(),
@@ -30,11 +30,20 @@ export const nodeDataSchema = z.discriminatedUnion("kind", [
     videos: z.array(mediaAssetSchema).default([]),
   }),
   z.object({
-    kind: z.literal("falFluxSchnell"),
+    kind: z.literal("generationBlock"),
     label: z.string(),
+    /** Appended to upstream text prompts for diffusion / video models */
     suffix: z.string(),
     imageSize: falFluxPresetSizeSchema,
     numInferenceSteps: z.number().min(1).max(12),
+    /** fal-ai/veo3.1/lite duration tier */
+    videoDuration: z.enum(["4s", "6s", "8s"]),
+    videoResolution: z.enum(["720p", "1080p"]),
+    /** When true, maps to `generate_audio: false` on Veo lite (usually cheapest). */
+    videoSilent: z.boolean(),
+    /** WAN image/video-to-video billed per second — minimum keeps demos cheap */
+    wanDurationSec: z.number().int().min(2).max(15),
+    wanResolution: z.enum(["720p", "1080p"]),
   }),
   z.object({
     kind: z.literal("platformExport"),
@@ -71,11 +80,7 @@ export type WorkflowNode = z.infer<typeof workflowNodeSchema>;
 export type WorkflowEdge = z.infer<typeof workflowEdgeSchema>;
 export type NodeData = z.infer<typeof nodeDataSchema>;
 
-export const NODE_TYPES = [
-  "mediaInput",
-  "falFluxSchnell",
-  "platformExport",
-] as const;
+export const NODE_TYPES = ["mediaInput", "generationBlock", "platformExport"] as const;
 
 export type CanvasNodeType = (typeof NODE_TYPES)[number];
 
@@ -89,13 +94,18 @@ export function defaultNodeData(type: CanvasNodeType): NodeData {
         images: [],
         videos: [],
       };
-    case "falFluxSchnell":
+    case "generationBlock":
       return {
-        kind: "falFluxSchnell",
-        label: "Flux Schnell",
+        kind: "generationBlock",
+        label: "Generate",
         suffix: ", high quality ad creative, clean composition",
         imageSize: "landscape_4_3",
         numInferenceSteps: 2,
+        videoDuration: "4s",
+        videoResolution: "720p",
+        videoSilent: true,
+        wanDurationSec: 2,
+        wanResolution: "720p",
       };
     case "platformExport":
       return {

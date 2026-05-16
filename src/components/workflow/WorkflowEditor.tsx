@@ -20,7 +20,7 @@ import { saveAs } from "file-saver";
 import JSZip from "jszip";
 import { useTheme } from "next-themes";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 
 import { ThemeToggle } from "@/components/theme-toggle";
 import { FlowContextMenuPortal } from "@/components/workflow/FlowContextMenu";
@@ -29,7 +29,7 @@ import {
   WorkflowRunProvider,
   type WorkflowRunPhase,
 } from "@/components/workflow/WorkflowRunContext";
-import { FalFluxSchnellNode } from "@/components/workflow/nodes/FalFluxSchnellNode";
+import { GenerationBlockNode } from "@/components/workflow/nodes/GenerationBlockNode";
 import { MediaInputNode } from "@/components/workflow/nodes/MediaInputNode";
 import { PlatformExportNode } from "@/components/workflow/nodes/PlatformExportNode";
 import type { AppNode } from "@/lib/workflow/app-node";
@@ -49,7 +49,6 @@ import {
   clearLastLoadedWorkflowId,
   deleteWorkflowDoc,
   getLastLoadedWorkflowId,
-  getLastRunSummaryJson,
   listWorkflowDocs,
   loadWorkflowDoc,
   persistWorkflowRunArtifacts,
@@ -61,7 +60,7 @@ import { normalizeWorkflowDocument } from "@/lib/workflow/migrate";
 
 const nodeTypes = {
   mediaInput: MediaInputNode,
-  falFluxSchnell: FalFluxSchnellNode,
+  generationBlock: GenerationBlockNode,
   platformExport: PlatformExportNode,
 } satisfies NodeTypes;
 
@@ -93,105 +92,6 @@ type FlowContextMenuState =
     }
   | { kind: "node"; clientX: number; clientY: number; nodeId: string };
 
-function BlobThumb({ blob, title }: { blob: Blob; title: string }) {
-  const url = useMemo(() => URL.createObjectURL(blob), [blob]);
-  useEffect(() => {
-    return () => URL.revokeObjectURL(url);
-  }, [url]);
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={url}
-      alt=""
-      title={title}
-      className="h-11 w-11 shrink-0 rounded border border-border object-cover"
-    />
-  );
-}
-
-/** Strips / footer: quick glance at image/video outputs from the latest run or in-progress live outputs. */
-function GeneratedPreviewStrip({
-  outputs,
-}: {
-  outputs: RuntimeOutputs | null;
-}) {
-  const entries = useMemo(() => {
-    if (!outputs) return [] as { key: string; el: ReactNode }[];
-    const out: { key: string; el: ReactNode }[] = [];
-    for (const [nodeId, o] of Object.entries(outputs)) {
-      if (o.type === "image") {
-        out.push({
-          key: `${nodeId}-img`,
-          el: (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={o.url}
-              alt=""
-              title="Generated image"
-              className="h-11 w-11 shrink-0 rounded border border-border object-cover"
-            />
-          ),
-        });
-      } else if (o.type === "video") {
-        out.push({
-          key: `${nodeId}-vid`,
-          el: (
-            <video
-              src={o.url}
-              muted
-              playsInline
-              className="h-11 w-20 shrink-0 rounded border border-border object-cover"
-              title="Video"
-            />
-          ),
-        });
-      } else if (o.type === "mediaInput") {
-        o.imageUrls.slice(0, 3).forEach((u, i) => {
-          out.push({
-            key: `${nodeId}-in-${i}`,
-            el: (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={u}
-                alt=""
-                title="Input image"
-                className="h-11 w-11 shrink-0 rounded border border-border object-cover"
-              />
-            ),
-          });
-        });
-      } else if (o.type === "bundle") {
-        const firstImg = o.files.find(
-          (f) =>
-            f.blob.type.startsWith("image/") ||
-            /\.(png|jpe?g|webp)$/i.test(f.path),
-        );
-        if (firstImg) {
-          out.push({
-            key: `${nodeId}-bundle`,
-            el: (
-              <BlobThumb blob={firstImg.blob} title="Export bundle preview" />
-            ),
-          });
-        }
-      }
-    }
-    return out;
-  }, [outputs]);
-
-  if (entries.length === 0) return null;
-
-  return (
-    <div className="flex max-w-full items-center gap-1.5 overflow-x-auto py-0.5">
-      {entries.map(({ key, el }) => (
-        <div key={key} className="shrink-0">
-          {el}
-        </div>
-      ))}
-    </div>
-  );
-}
-
 export function WorkflowEditor() {
   const [workflowName, setWorkflowName] = useState("Untitled campaign");
   const [workflowId, setWorkflowId] = useState(() => crypto.randomUUID());
@@ -205,7 +105,6 @@ export function WorkflowEditor() {
   const [liveOutputs, setLiveOutputs] = useState<RuntimeOutputs | null>(null);
   const [runPhase, setRunPhase] = useState<WorkflowRunPhase>("idle");
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
-  const [storageSavedHint, setStorageSavedHint] = useState<string | null>(null);
 
   const metaPublishCandidates = useMemo(() => {
     if (!lastOutputs) return [] as AppNode[];
@@ -288,35 +187,6 @@ export function WorkflowEditor() {
     }),
     [lastOutputs, liveOutputs, activeNodeId, runPhase],
   );
-
-  const previewOutputs = useMemo(() => {
-    if (runPhase === "running" && liveOutputs) return liveOutputs;
-    return lastOutputs;
-  }, [runPhase, liveOutputs, lastOutputs]);
-
-  const refreshStorageHint = useCallback(() => {
-    try {
-      const raw = getLastRunSummaryJson();
-      if (!raw) {
-        setStorageSavedHint(null);
-        return;
-      }
-      const j = JSON.parse(raw) as { artifactCount?: number };
-      if (typeof j.artifactCount === "number") {
-        setStorageSavedHint(
-          j.artifactCount > 0
-            ? `${j.artifactCount} file(s) from the latest run are stored in IndexedDB on this device.`
-            : "Latest run had nothing new to store locally.",
-        );
-      }
-    } catch {
-      setStorageSavedHint(null);
-    }
-  }, []);
-
-  useEffect(() => {
-    refreshStorageHint();
-  }, [refreshStorageHint]);
 
   const closeContextMenu = useCallback(() => {
     setContextMenu({ kind: "closed" });
@@ -576,7 +446,7 @@ export function WorkflowEditor() {
     const textId = crypto.randomUUID();
     const fluxId = crypto.randomUUID();
     const nextId = crypto.randomUUID();
-    setWorkflowName("Starter · Flux Schnell");
+    setWorkflowName("Starter · Text → image");
     setWorkflowId(nextId);
     setLastLoadedWorkflowId(nextId);
     setNodes([
@@ -595,9 +465,9 @@ export function WorkflowEditor() {
       },
       {
         id: fluxId,
-        type: "falFluxSchnell",
+        type: "generationBlock",
         position: { x: 320, y: 0 },
-        data: defaultNodeData("falFluxSchnell"),
+        data: defaultNodeData("generationBlock"),
       },
     ]);
     setEdges([
@@ -719,7 +589,6 @@ export function WorkflowEditor() {
         workflowNodes,
         outputs,
       ).then(({ count }) => {
-        refreshStorageHint();
         if (count > 0) {
           setStatus(
             `Run finished — saved ${count} file(s) to this browser (IndexedDB)`,
@@ -998,7 +867,7 @@ export function WorkflowEditor() {
             title={
               canPublishMeta
                 ? "Post images to the selected Page or Instagram (2+ https images = IG carousel)"
-                : "Run with Facebook/Instagram export, select a Page, and use https image URLs (e.g. Flux)."
+                : "Run with Facebook/Instagram export, select a Page, and use https image URLs (from generation)."
             }
             className="rounded-md border border-border bg-card px-3 py-1 text-xs font-medium text-card-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
             onClick={() => void publishMeta()}
@@ -1057,34 +926,6 @@ export function WorkflowEditor() {
           </div>
         </div>
       </header>
-
-      {runPhase === "running" ||
-      (previewOutputs && Object.keys(previewOutputs).length > 0) ? (
-        <div className="flex flex-wrap items-stretch gap-3 border-b border-border bg-muted/20 px-4 py-2">
-          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-            <div className="flex flex-wrap items-center gap-2 text-[10px]">
-              <span className="font-semibold uppercase tracking-wide text-muted-foreground">
-                Generated media
-              </span>
-              {runPhase === "running" ? (
-                <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[9px] font-medium text-primary">
-                  In progress…
-                </span>
-              ) : null}
-            </div>
-            <p className="text-[9px] leading-snug text-muted-foreground">
-              Execution follows the graph: upstream nodes before downstream. When several nodes are
-              ready at once, the one furthest <strong className="font-medium text-foreground">left</strong> on the canvas runs first. Thumbnails fill in as each block finishes.
-            </p>
-            <GeneratedPreviewStrip outputs={previewOutputs} />
-          </div>
-          {storageSavedHint ? (
-            <p className="max-w-[220px] self-center text-[9px] leading-snug text-muted-foreground">
-              {storageSavedHint}
-            </p>
-          ) : null}
-        </div>
-      ) : null}
 
       <div className="flex flex-1 overflow-hidden">
         <WorkflowAgentPanel

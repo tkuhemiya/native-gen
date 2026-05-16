@@ -162,7 +162,7 @@ export function PlatformExportNode(props: NodeProps<AppNode>) {
       ) : null}
       <ol className="mb-2 list-decimal space-y-0.5 pl-4 text-[9px] leading-relaxed text-muted-foreground">
         <li>Connect accounts in Social accounts (reconnect Meta after scope updates).</li>
-        <li>Pick platform + Page (Meta). Use Flux so images are https (IG: 2+ images → carousel).</li>
+        <li>Pick platform + Page (Meta). Publish needs https images (wire from the generation image pin).</li>
         <li>Run workflow, then Publish to Meta / YouTube in the header.</li>
         <li>Demo tip: record a short screen capture as backup if Wi‑Fi fails.</li>
       </ol>
@@ -231,7 +231,7 @@ export function PlatformExportNode(props: NodeProps<AppNode>) {
           <p className="text-[9px] leading-relaxed text-muted-foreground">
             After <strong className="font-medium text-foreground">Run workflow</strong>, use{" "}
             <strong className="font-medium text-foreground">Publish to Meta</strong> in the header.
-            Images must be https (e.g. Flux). Wire multiple image edges for an Instagram carousel.
+            Images must be https (generation image pin). Wire multiple image edges for an Instagram carousel.
           </p>
         </div>
       ) : null}

@@ -36,6 +36,35 @@ export async function zipRuntimeOutputs(
       } catch {
         /* skip */
       }
+    } else if (out.type === "generation") {
+      if (out.text?.trim()) {
+        addBlob(
+          `${prefix}-generated-copy.txt`,
+          new Blob([out.text], { type: "text/plain;charset=utf-8" }),
+        );
+      }
+      if (out.imageUrl) {
+        try {
+          const res = await fetch(out.imageUrl);
+          if (res.ok) {
+            const ext =
+              res.headers.get("content-type")?.includes("png") ? "png" : "jpg";
+            addBlob(`${prefix}-generated.${ext}`, await res.blob());
+          }
+        } catch {
+          /* skip */
+        }
+      }
+      if (out.videoUrl) {
+        try {
+          const res = await fetch(out.videoUrl);
+          if (res.ok) {
+            addBlob(`${prefix}-generated-video.mp4`, await res.blob());
+          }
+        } catch {
+          /* skip */
+        }
+      }
     } else if (out.type === "mediaInput") {
       if (out.text.trim()) {
         addBlob(

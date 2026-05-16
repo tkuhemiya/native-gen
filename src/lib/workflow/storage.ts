@@ -187,6 +187,63 @@ export async function persistWorkflowRunArtifacts(
       } catch {
         /* skip */
       }
+    } else if (out.type === "generation") {
+      if (out.text?.trim()) {
+        push({
+          runId,
+          workflowId,
+          workflowName,
+          createdAt,
+          nodeId,
+          nodeLabel,
+          nodeKind,
+          fileName: `${slug}-${nodeId.slice(0, 8)}-generated-copy.txt`,
+          blob: new Blob([out.text], { type: "text/plain;charset=utf-8" }),
+        });
+      }
+      if (out.imageUrl) {
+        try {
+          const res = await fetch(out.imageUrl);
+          if (res.ok) {
+            const ext = res.headers.get("content-type")?.includes("png")
+              ? "png"
+              : "jpg";
+            push({
+              runId,
+              workflowId,
+              workflowName,
+              createdAt,
+              nodeId,
+              nodeLabel,
+              nodeKind,
+              fileName: `${slug}-${nodeId.slice(0, 8)}-generated.${ext}`,
+              blob: await res.blob(),
+            });
+          }
+        } catch {
+          /* skip */
+        }
+      }
+      if (out.videoUrl) {
+        try {
+          const res = await fetch(out.videoUrl);
+          if (res.ok) {
+            push({
+              runId,
+              workflowId,
+              workflowName,
+              createdAt,
+              nodeId,
+              nodeLabel,
+              nodeKind,
+              fileName: `${slug}-${nodeId.slice(0, 8)}-generated-video.mp4`,
+              blob: await res.blob(),
+            });
+          }
+        } catch {
+          /* skip */
+        }
+      }
     } else if (out.type === "mediaInput") {
       if (out.text.trim()) {
         push({

@@ -3,6 +3,11 @@ import {
   GraphError,
   topologicalOrderPreferLeft,
 } from "./graph";
+import {
+  incomingMediaLanes,
+  outgoingMediaLanes,
+  planGeneration,
+} from "./generation-plan";
 import type { WorkflowEdge, WorkflowNode } from "./schema";
 
 export type RuntimeOutputs = Record<
@@ -10,6 +15,12 @@ export type RuntimeOutputs = Record<
   | { type: "text"; value: string }
   | { type: "image"; url: string }
   | { type: "video"; url: string }
+  | {
+      type: "generation";
+      text?: string;
+      imageUrl?: string;
+      videoUrl?: string;
+    }
   | {
       type: "mediaInput";
       text: string;
@@ -50,11 +61,6 @@ function runLabel(node: WorkflowNode): string {
   return node.data.label.trim() || node.data.kind;
 }
 
-type FalTextToImageResponse = {
-  image?: { url: string };
-  images?: { url: string }[];
-};
-
 function isTextTargetEdge(edge: WorkflowEdge, nodeId: string) {
   return edge.target === nodeId && (edge.targetHandle == null || edge.targetHandle === "text");
 }
@@ -89,6 +95,12 @@ function collectUpstreamText(
     if (!isTextTargetEdge(edge, nodeId)) continue;
     const upstream = outputs[edge.source];
     if (!upstream) continue;
+    if (upstream.type === "generation") {
+      if (edge.sourceHandle !== "text") continue;
+      const t = upstream.text?.trim();
+      if (t) parts.push(t);
+      continue;
+    }
     if (upstream.type === "text") {
       if (edge.sourceHandle === "image" || edge.sourceHandle === "video") continue;
       parts.push(upstream.value);
@@ -120,6 +132,16 @@ function collectUpstreamImageUrls(
     if (!isImageTargetEdge(edge, nodeId)) continue;
     const upstream = outputs[edge.source];
     if (!upstream) continue;
+    if (upstream.type === "generation") {
+      const u = upstream.imageUrl;
+      if (u && edge.sourceHandle === "image") {
+        if (!seen.has(u)) {
+          urls.push(u);
+          seen.add(u);
+        }
+      }
+      continue;
+    }
     if (upstream.type === "image" && upstream.url) {
       if (edge.sourceHandle === "text" || edge.sourceHandle === "video") continue;
       if (!seen.has(upstream.url)) {
@@ -149,6 +171,11 @@ function collectUpstreamVideoUrl(
     if (!isVideoTargetEdge(edge, nodeId)) continue;
     const upstream = outputs[edge.source];
     if (!upstream) continue;
+    if (upstream.type === "generation") {
+      const u = upstream.videoUrl;
+      if (u && edge.sourceHandle === "video") return u;
+      continue;
+    }
     if (upstream.type === "video") {
       if (edge.sourceHandle === "text" || edge.sourceHandle === "image") continue;
       return upstream.url;
@@ -220,33 +247,148 @@ export async function runWorkflowDAG(
           output: outputs[id],
         });
         break;
-      case "falFluxSchnell": {
-        const prompt =
-          collectUpstreamText(id, incomingByTarget, outputs) + data.suffix;
-        if (!prompt.trim()) {
-          throw new GraphError("Flux Schnell needs upstream text");
+      case "generationBlock": {
+        const inL = incomingMediaLanes(id, incomingByTarget);
+        const outL = outgoingMediaLanes(id, edges);
+        const plan = planGeneration(inL, outL);
+
+        const promptNotes = collectUpstreamText(id, incomingByTarget, outputs).trim();
+        const promptBody =
+          promptNotes +
+          (data.suffix.trim()
+            ? `${promptNotes ? "\n" : ""}${data.suffix.trim()}`
+            : "");
+        const diffusionPrompt =
+          promptBody.trim() ||
+          data.suffix.trim() ||
+          "Subtle cinematic motion, sharp detail, advertising polish";
+
+        const wanPrompt =
+          promptBody.trim() !== "" ? promptBody.trim().slice(0, 5000) : undefined;
+
+        async function postGeneration(body: Record<string, unknown>) {
+          const res = await fetch("/api/fal/generation", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new GraphError(
+              typeof err?.error === "string"
+                ? err.error
+                : `Generation failed (${res.status})`,
+            );
+          }
+          return res.json() as Promise<Record<string, unknown>>;
         }
-        const res = await fetch("/api/fal/text-to-image", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            prompt: prompt.trim(),
+
+        let textOut: string | undefined;
+        let imageUrlOut: string | undefined;
+        let videoUrlOut: string | undefined;
+
+        if (plan.needPassthroughText) {
+          if (!promptNotes) {
+            throw new GraphError("Text output needs upstream copy wired to the text pin");
+          }
+          textOut = promptNotes;
+        }
+
+        if (plan.needCaption) {
+          const imgs = collectUpstreamImageUrls(id, incomingByTarget, outputs);
+          const imgUrl = imgs[0];
+          if (!imgUrl) {
+            throw new GraphError("Caption path needs an upstream image URL on the image pin");
+          }
+          const cap = await postGeneration({
+            intent: "image-to-text",
+            imageUrl: imgUrl,
+          });
+          const caption =
+            typeof cap.text === "string" ? cap.text.trim() : "";
+          if (!caption) throw new GraphError("Caption model returned empty text");
+          textOut = [caption, promptNotes].filter(Boolean).join("\n\n");
+        }
+
+        if (plan.needTextToImage) {
+          const body = await postGeneration({
+            intent: "text-to-image",
+            prompt: diffusionPrompt.slice(0, 4000),
             imageSize: data.imageSize,
             numInferenceSteps: data.numInferenceSteps,
-          }),
-        });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new GraphError(
-            typeof err?.error === "string"
-              ? err.error
-              : `Fal request failed (${res.status})`,
-          );
+          });
+          const url =
+            typeof (body.image as { url?: string } | undefined)?.url === "string"
+              ? (body.image as { url: string }).url
+              : undefined;
+          if (!url) throw new GraphError("Image generation missing URL");
+          imageUrlOut = url;
         }
-        const body = (await res.json()) as FalTextToImageResponse;
-        const url = body.image?.url ?? body.images?.[0]?.url;
-        if (!url) throw new GraphError("Fal response missing image URL");
-        outputs[id] = { type: "image", url };
+
+        if (plan.needTextToVideo) {
+          const body = await postGeneration({
+            intent: "text-to-video",
+            prompt: diffusionPrompt.slice(0, 8000),
+            duration: data.videoDuration,
+            resolution: data.videoResolution,
+            silent: data.videoSilent,
+            aspectRatio: "16:9",
+          });
+          const url =
+            typeof (body.video as { url?: string } | undefined)?.url === "string"
+              ? (body.video as { url: string }).url
+              : undefined;
+          if (!url) throw new GraphError("Text→video missing URL");
+          videoUrlOut = url;
+        }
+
+        if (plan.needImageToVideo) {
+          const imgs = collectUpstreamImageUrls(id, incomingByTarget, outputs);
+          const imgUrl = imgs[0];
+          if (!imgUrl) {
+            throw new GraphError("Image→video needs an upstream image URL");
+          }
+          const body = await postGeneration({
+            intent: "image-to-video",
+            imageUrl: imgUrl,
+            prompt: wanPrompt,
+            durationSec: data.wanDurationSec,
+            resolution: data.wanResolution,
+          });
+          const url =
+            typeof (body.video as { url?: string } | undefined)?.url === "string"
+              ? (body.video as { url: string }).url
+              : undefined;
+          if (!url) throw new GraphError("Image→video missing URL");
+          videoUrlOut = url;
+        }
+
+        if (plan.needVideoToVideo) {
+          const vidUrl = collectUpstreamVideoUrl(id, incomingByTarget, outputs);
+          if (!vidUrl) {
+            throw new GraphError("Video continuation needs an upstream video URL");
+          }
+          const body = await postGeneration({
+            intent: "video-to-video",
+            videoUrl: vidUrl,
+            prompt: wanPrompt,
+            durationSec: data.wanDurationSec,
+            resolution: data.wanResolution,
+          });
+          const url =
+            typeof (body.video as { url?: string } | undefined)?.url === "string"
+              ? (body.video as { url: string }).url
+              : undefined;
+          if (!url) throw new GraphError("Video→video missing URL");
+          videoUrlOut = url;
+        }
+
+        outputs[id] = {
+          type: "generation",
+          text: textOut,
+          imageUrl: imageUrlOut,
+          videoUrl: videoUrlOut,
+        };
         onNodeComplete?.({
           nodeId: id,
           index: step + 1,
@@ -326,7 +468,7 @@ export async function runWorkflowDAG(
         const httpsImages = imageUrlsAll.filter((u) => /^https:\/\//i.test(u));
         if (httpsImages.length === 0) {
           throw new GraphError(
-            `${data.platform} export needs at least one upstream image with a public https URL (e.g. Flux output).`,
+            `${data.platform} export needs at least one upstream image with a public https URL (from the generation block image pin).`,
           );
         }
 

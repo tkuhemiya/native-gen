@@ -115,6 +115,25 @@ function migrateNode(node: z.infer<typeof v1WorkflowDocumentSchema>["nodes"][num
       },
     };
   }
+  if (d.kind === "falFluxSchnell") {
+    return {
+      id: node.id,
+      type: "generationBlock",
+      position: node.position,
+      data: {
+        kind: "generationBlock",
+        label: d.label,
+        suffix: d.suffix,
+        imageSize: d.imageSize,
+        numInferenceSteps: d.numInferenceSteps,
+        videoDuration: "4s",
+        videoResolution: "720p",
+        videoSilent: true,
+        wanDurationSec: 2,
+        wanResolution: "720p",
+      },
+    };
+  }
   return {
     id: node.id,
     type: node.type,
@@ -140,6 +159,62 @@ function migrateV1Workflow(v1: z.infer<typeof v1WorkflowDocumentSchema>): Workfl
     edges,
     updatedAt: new Date().toISOString(),
   };
+}
+
+/** v2 workflows stored Flux Schnell nodes — remap to unified generation blocks before validating v3. */
+export function coerceFluxToGeneration(raw: unknown): unknown {
+  if (raw === null || typeof raw !== "object") return raw;
+  const doc = raw as Record<string, unknown>;
+  const nodes = doc.nodes;
+  if (!Array.isArray(nodes)) return raw;
+
+  const nextNodes = nodes.map((node) => {
+    if (node === null || typeof node !== "object") return node;
+    const n = node as Record<string, unknown>;
+    const data = n.data;
+    if (data === null || typeof data !== "object") return node;
+    const d = data as Record<string, unknown>;
+    if (n.type !== "falFluxSchnell" && d.kind !== "falFluxSchnell") return node;
+
+    return {
+      ...n,
+      type: "generationBlock",
+      data: {
+        kind: "generationBlock",
+        label: typeof d.label === "string" ? d.label : "Generate",
+        suffix: typeof d.suffix === "string" ? d.suffix : "",
+        imageSize: typeof d.imageSize === "string" ? d.imageSize : "landscape_4_3",
+        numInferenceSteps:
+          typeof d.numInferenceSteps === "number" ? d.numInferenceSteps : 2,
+        videoDuration:
+          d.videoDuration === "4s" || d.videoDuration === "6s" || d.videoDuration === "8s"
+            ? d.videoDuration
+            : "4s",
+        videoResolution:
+          d.videoResolution === "1080p" || d.videoResolution === "720p"
+            ? d.videoResolution
+            : "720p",
+        videoSilent: typeof d.videoSilent === "boolean" ? d.videoSilent : true,
+        wanDurationSec:
+          typeof d.wanDurationSec === "number"
+            ? Math.min(15, Math.max(2, Math.floor(d.wanDurationSec)))
+            : 2,
+        wanResolution:
+          d.wanResolution === "1080p" || d.wanResolution === "720p"
+            ? d.wanResolution
+            : "720p",
+      },
+    };
+  });
+
+  return { ...doc, nodes: nextNodes };
+}
+
+function bumpWorkflowVersion2To3(raw: unknown): unknown {
+  if (raw === null || typeof raw !== "object") return raw;
+  const doc = raw as Record<string, unknown>;
+  if (doc.version === 2) return { ...doc, version: WORKFLOW_DOCUMENT_VERSION };
+  return raw;
 }
 
 /** Converts legacy per-node `imageDataUrl` / `videoDataUrl` into `images` / `videos` arrays. */
@@ -207,12 +282,15 @@ export function coerceWorkflowDocumentRaw(raw: unknown): unknown {
 }
 
 /**
- * Accept v2 documents, or migrate legacy v1 (three input node kinds) to v2.
+ * Accept v3 workflows; coerce legacy v2 Flux nodes → generation blocks;
+ * migrate very old v1 documents (split input kinds).
  */
 export function normalizeWorkflowDocument(raw: unknown): WorkflowDocument | null {
-  const coerced = coerceWorkflowDocumentRaw(raw);
-  const v2 = workflowDocumentSchema.safeParse(coerced);
-  if (v2.success) return v2.data;
+  const coerced = bumpWorkflowVersion2To3(
+    coerceFluxToGeneration(coerceWorkflowDocumentRaw(raw)),
+  );
+  const v3 = workflowDocumentSchema.safeParse(coerced);
+  if (v3.success) return v3.data;
 
   const v1 = v1WorkflowDocumentSchema.safeParse(raw);
   if (!v1.success) return null;

@@ -6,7 +6,7 @@ import {
   generateWorkflowWithOpenAI,
   workflowAgentLegacyUserContent,
   type WorkflowAgentDialogTurn,
-} from "@/lib/workflow/workflow-agent-openai";
+} from "@/lib/workflow/workflow-agent";
 
 const messageSchema = z.object({
   role: z.enum(["user", "assistant"]),
@@ -77,9 +77,15 @@ export async function POST(req: Request) {
 
   if (hasOpenAI) {
     try {
-      const fromModel = await generateWorkflowWithOpenAI(dialog);
-      if (fromModel) {
-        return NextResponse.json({ workflow: fromModel, source: "openai" as const });
+      const result = await generateWorkflowWithOpenAI(dialog);
+      if (result.workflow) {
+        return NextResponse.json({
+          workflow: result.workflow,
+          source: "openai" as const,
+          ...(result.validationRepaired && {
+            note: "Workflow produced after tool loop (lint/compile or retries).",
+          }),
+        });
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : "OpenAI request failed";
@@ -97,6 +103,6 @@ export async function POST(req: Request) {
   return NextResponse.json({
     workflow,
     source: "template" as const,
-    note: "Optional: set OPENAI_API_KEY in .env.local (then restart `next dev`) so this chat can reason about free-form briefs instead of keyword templates.",
+    note: "Tip: add OPENAI_API_KEY to .env.local (restart the dev server) for AI-shaped graphs beyond this keyword matcher.",
   });
 }

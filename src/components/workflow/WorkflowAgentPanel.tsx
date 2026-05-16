@@ -80,16 +80,20 @@ export function WorkflowAgentPanel({ onApplyDocument, onStatus }: WorkflowAgentP
       await onApplyDocument(body.workflow);
       const hint =
         body.source === "openai"
-          ? "Applied agent workflow from the model."
+          ? ["Applied agent workflow from the model.", body.note].filter(Boolean).join(" ")
           : body.note ?? "Applied keyword-based template workflow.";
       onStatus(hint);
       const assistantContent =
         body.source === "openai"
-          ? "Applied the workflow to the canvas. Ask for tweaks (e.g. add TikTok export, reorder steps)."
-          : [
-              "Applied a starter workflow to the canvas from your brief.",
-              body.note ? body.note : "Using the keyword template (mention YouTube, Facebook, Instagram, or TikTok to add an export node).",
-            ].join("\n\n");
+          ? [
+              "Applied the workflow to the canvas. Ask for tweaks (e.g. add TikTok export, reorder steps).",
+              body.note,
+            ]
+              .filter(Boolean)
+              .join("\n\n")
+          : ["Applied a starter workflow to the canvas from your brief.", body.note].filter(Boolean).join(
+              "\n\n",
+            );
       setMessages((m) => [
         ...m,
         {

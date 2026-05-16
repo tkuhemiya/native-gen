@@ -5,8 +5,11 @@ export function sourceMediaLane(
   sourceType: string,
   sourceHandle: string | null | undefined,
 ): "text" | "image" | "video" | "wildcard" {
-  if (sourceType === "falFluxSchnell") {
-    return "image";
+  if (sourceType === "generationBlock") {
+    if (sourceHandle === "text") return "text";
+    if (sourceHandle === "image") return "image";
+    if (sourceHandle === "video") return "video";
+    return "wildcard";
   }
   if (sourceType === "mediaInput") {
     if (sourceHandle === "text") return "text";
@@ -21,8 +24,10 @@ function targetMediaLane(
   targetType: string,
   targetHandle: string | null | undefined,
 ): "text" | "image" | "video" | null {
-  if (targetType === "falFluxSchnell") {
+  if (targetType === "generationBlock") {
     if (targetHandle === "text" || targetHandle == null) return "text";
+    if (targetHandle === "image") return "image";
+    if (targetHandle === "video") return "video";
     return null;
   }
   if (targetType === "platformExport") {

@@ -71,9 +71,9 @@ export function FlowContextMenuPortal({
             type="button"
             role="menuitem"
             className={itemCls}
-            onClick={() => onAddBlock("falFluxSchnell")}
+            onClick={() => onAddBlock("generationBlock")}
           >
-            Flux Schnell (Fal)
+            Generation block (fal)
           </button>
           <p className={labelCls}>Delivery</p>
           <button
@@ -91,7 +91,7 @@ export function FlowContextMenuPortal({
             className={itemCls}
             onClick={() => onStarterWorkflow()}
           >
-            Insert Text → Flux graph
+            Insert Text → Image starter
           </button>
           <p className={labelCls}>File</p>
           <button type="button" role="menuitem" className={itemCls} onClick={() => onExportJson()}>
