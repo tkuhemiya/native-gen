@@ -33,7 +33,7 @@ import { MediaInputNode } from "@/components/workflow/nodes/MediaInputNode";
 import { PlatformExportNode } from "@/components/workflow/nodes/PlatformExportNode";
 import { VideoBlockNode } from "@/components/workflow/nodes/VideoBlockNode";
 import type { AppNode } from "@/lib/workflow/app-node";
-import { topLeftForCenteredNode } from "@/lib/workflow/node-layout";
+import { layoutWorkflowNodesCompactDAG, topLeftForCenteredNode } from "@/lib/workflow/node-layout";
 import {
   WORKFLOW_DOCUMENT_VERSION,
   defaultNodeData,
@@ -132,7 +132,7 @@ export function WorkflowEditor() {
   const flowColorMode =
     themeMounted && resolvedTheme === "dark" ? "dark" : "light";
 
-  const { screenToFlowPosition, viewportInitialized, getNode } = useReactFlow<
+  const { screenToFlowPosition, viewportInitialized, getNode, fitView } = useReactFlow<
     AppNode,
     Edge
   >();
@@ -443,6 +443,23 @@ export function WorkflowEditor() {
     [closeContextMenu, setEdges, setNodes],
   );
 
+  const applyAutoLayout = useCallback(() => {
+    const wfEdges = rfEdgesToWorkflow(edges);
+    setNodes((nds) => {
+      const wfNodes = rfNodesToWorkflow(nds);
+      const laidOut = layoutWorkflowNodesCompactDAG(wfNodes, wfEdges);
+      const posById = new Map(laidOut.map((n) => [n.id, n.position]));
+      return nds.map((n) => {
+        const p = posById.get(n.id);
+        return p ? { ...n, position: { ...p } } : n;
+      });
+    });
+    setStatus("Tidied layout");
+    requestAnimationFrame(() => {
+      fitView({ padding: 0.12, minZoom: 0.06, maxZoom: 8 });
+    });
+  }, [edges, fitView, setNodes]);
+
   const onConnect = useCallback(
     (params: Connection) =>
       setEdges((eds) =>
@@ -703,6 +720,21 @@ export function WorkflowEditor() {
             </button>
             <button
               type="button"
+              disabled={runPhase === "running" || nodes.length === 0}
+              title={
+                nodes.length === 0
+                  ? "Add nodes first"
+                  : runPhase === "running"
+                    ? "Workflow is running"
+                    : "Arrange nodes by dependency columns"
+              }
+              className="rounded-md border border-border bg-card px-3 py-1 text-xs font-medium text-card-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={applyAutoLayout}
+            >
+              Tidy layout
+            </button>
+            <button
+              type="button"
               disabled={runPhase === "running"}
               title={runPhase === "running" ? "Workflow is running" : undefined}
               className="rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
@@ -852,6 +884,10 @@ export function WorkflowEditor() {
       }}
       onTriggerImport={() => {
         importRef.current?.click();
+        closeContextMenu();
+      }}
+      onTidyLayout={() => {
+        applyAutoLayout();
         closeContextMenu();
       }}
     />

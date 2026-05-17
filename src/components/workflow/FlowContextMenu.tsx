@@ -16,6 +16,7 @@ type FlowContextMenuPortalProps = {
   onDeleteNode: (nodeId: string) => void;
   onExportJson: () => void;
   onTriggerImport: () => void;
+  onTidyLayout: () => void;
 };
 
 export function FlowContextMenuPortal({
@@ -26,12 +27,13 @@ export function FlowContextMenuPortal({
   onDeleteNode,
   onExportJson,
   onTriggerImport,
+  onTidyLayout,
 }: FlowContextMenuPortalProps) {
   if (!menu) return null;
 
   const pad = 8;
   const estW = 220;
-  const estH = menu.kind === "pane" ? 360 : 120;
+  const estH = menu.kind === "pane" ? 404 : 120;
   const left = Math.max(
     pad,
     Math.min(menu.clientX, window.innerWidth - estW - pad),
@@ -89,6 +91,10 @@ export function FlowContextMenuPortal({
             onClick={() => onAddBlock("platformExport")}
           >
             Platform export
+          </button>
+          <p className={labelCls}>Canvas</p>
+          <button type="button" role="menuitem" className={itemCls} onClick={() => onTidyLayout()}>
+            Tidy layout
           </button>
           <p className={labelCls}>File</p>
           <button type="button" role="menuitem" className={itemCls} onClick={() => onExportJson()}>

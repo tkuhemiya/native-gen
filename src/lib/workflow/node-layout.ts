@@ -10,8 +10,8 @@ export const NODE_ANCHOR: Record<CanvasNodeType, { w: number; h: number }> = {
   platformExport: { w: 300, h: 380 },
 };
 
-/** Horizontal gap between columns (after widest node in the column). */
-const LAYOUT_COLUMN_GAP = 100;
+/** Horizontal gap between DAG depth columns (after the widest node in each column). */
+const LAYOUT_COLUMN_GAP = 220;
 /** Vertical gap between stacked nodes in the same column. */
 const LAYOUT_ROW_GAP = 72;
 
@@ -29,8 +29,9 @@ function anchorForNode(node: WorkflowNode): { w: number; h: number } {
 }
 
 /**
- * Layer nodes by DAG depth (longest path from a source), then place each layer in a column
- * with nodes stacked vertically and centered using {@link NODE_ANCHOR} sizes.
+ * Layer nodes by DAG depth (longest path from a source), then place each depth as one column:
+ * nodes stack vertically and are centered around y = 0 using {@link NODE_ANCHOR} sizes.
+ * Columns are spaced horizontally by {@link LAYOUT_COLUMN_GAP}.
  */
 export function layoutWorkflowNodesCompactDAG(
   nodes: WorkflowNode[],
