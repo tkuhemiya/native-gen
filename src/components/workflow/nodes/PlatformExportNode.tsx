@@ -33,12 +33,21 @@ function isBundleMediaFile(f: { path: string; blob: Blob }): boolean {
   if (f.blob.type === "application/json" || /\.json$/i.test(f.path)) {
     return false;
   }
-  return f.blob.type.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(f.path);
+  return (
+    f.blob.type.startsWith("image/") ||
+    f.blob.type.startsWith("video/") ||
+    /\.(png|jpe?g|webp|gif|mp4|webm|mov)$/i.test(f.path)
+  );
+}
+
+function isBundleVideoFile(f: { path: string; blob: Blob }): boolean {
+  return f.blob.type.startsWith("video/") || /\.(mp4|webm|mov)$/i.test(f.path);
 }
 
 function downloadName(path: string, index: number, blob: Blob): string {
   const base = path.split("/").pop()?.trim() || "";
   if (base) return base;
+  if (blob.type.startsWith("video/")) return `output-${index + 1}.mp4`;
   const ext = blob.type.startsWith("image/") ? "png" : "bin";
   return `output-${index + 1}.${ext}`;
 }
@@ -143,7 +152,7 @@ export function PlatformExportNode(props: NodeProps<AppNode>) {
       <div className="mb-2 max-h-[260px] overflow-y-auto pr-0.5">
         {mediaFiles.length === 0 ? (
           <p className="py-6 text-center text-[10px] leading-relaxed text-muted-foreground">
-            Run the workflow to show exported stills from wired inputs here.
+            Run the workflow to show exported stills (or video clips) from wired inputs here.
           </p>
         ) : (
           <div className="columns-2 gap-2 [column-fill:_balance]">
@@ -151,6 +160,7 @@ export function PlatformExportNode(props: NodeProps<AppNode>) {
               const src = mediaUrls[i];
               if (!src) return null;
               const name = downloadName(file.path, i, file.blob);
+              const isVideo = isBundleVideoFile(file);
               return (
                 <div
                   key={`${file.path}-${i}`}
@@ -168,12 +178,22 @@ export function PlatformExportNode(props: NodeProps<AppNode>) {
                   >
                     <DownloadIcon className="h-3.5 w-3.5" />
                   </button>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={src}
-                    alt=""
-                    className="max-h-48 w-full rounded-md object-cover"
-                  />
+                  {isVideo ? (
+                    <video
+                      className="nodrag nopan max-h-48 w-full rounded-md object-cover"
+                      src={src}
+                      controls
+                      playsInline
+                      preload="metadata"
+                    />
+                  ) : (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={src}
+                      alt=""
+                      className="max-h-48 w-full rounded-md object-cover"
+                    />
+                  )}
                 </div>
               );
             })}

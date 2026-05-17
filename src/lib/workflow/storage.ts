@@ -264,6 +264,26 @@ export async function persistWorkflowRunArtifacts(
           /* skip */
         }
       }
+    } else if (out.type === "video") {
+      try {
+        const res = await fetch(out.url);
+        if (res.ok) {
+          const ext = res.headers.get("content-type")?.includes("webm") ? "webm" : "mp4";
+          push({
+            runId,
+            workflowId,
+            workflowName,
+            createdAt,
+            nodeId,
+            nodeLabel,
+            nodeKind,
+            fileName: `${slug}-${nodeId.slice(0, 8)}-generated-video.${ext}`,
+            blob: await res.blob(),
+          });
+        }
+      } catch {
+        /* CORS / offline */
+      }
     } else if (out.type === "mediaInput") {
       if (out.text.trim()) {
         push({
@@ -462,6 +482,19 @@ export async function rehydrateRuntimeOutputsFromArtifacts(
         }
       }
       out[nodeId] = { type: "generation", text, imageUrl };
+      continue;
+    }
+
+    if (kind === "videoBlock") {
+      let url: string | undefined;
+      for (const r of recs) {
+        if (r.fileName.includes("-generated-video.")) {
+          url = URL.createObjectURL(r.blob);
+        }
+      }
+      if (url) {
+        out[nodeId] = { type: "video", url };
+      }
       continue;
     }
 

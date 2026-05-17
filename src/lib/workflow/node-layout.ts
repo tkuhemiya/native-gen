@@ -6,6 +6,7 @@ import type { CanvasNodeType, WorkflowEdge, WorkflowNode } from "@/lib/workflow/
 export const NODE_ANCHOR: Record<CanvasNodeType, { w: number; h: number }> = {
   mediaInput: { w: 280, h: 312 },
   generationBlock: { w: 340, h: 340 },
+  videoBlock: { w: 320, h: 360 },
   platformExport: { w: 300, h: 380 },
 };
 
@@ -16,7 +17,12 @@ const LAYOUT_ROW_GAP = 72;
 
 function anchorForNode(node: WorkflowNode): { w: number; h: number } {
   const t = node.type;
-  if (t === "mediaInput" || t === "generationBlock" || t === "platformExport") {
+  if (
+    t === "mediaInput" ||
+    t === "generationBlock" ||
+    t === "videoBlock" ||
+    t === "platformExport"
+  ) {
     return NODE_ANCHOR[t];
   }
   return NODE_ANCHOR.generationBlock;

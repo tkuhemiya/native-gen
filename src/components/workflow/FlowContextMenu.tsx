@@ -71,7 +71,15 @@ export function FlowContextMenuPortal({
             className={itemCls}
             onClick={() => onAddBlock("generationBlock")}
           >
-            Generation block (fal)
+            Generation block (image)
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className={itemCls}
+            onClick={() => onAddBlock("videoBlock")}
+          >
+            Animate · video block (i2v)
           </button>
           <p className={labelCls}>Delivery</p>
           <button

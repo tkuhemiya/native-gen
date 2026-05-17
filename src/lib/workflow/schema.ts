@@ -1,7 +1,7 @@
 import { falFluxPresetSizeSchema } from "@/lib/fal/text-to-image-config";
 import { z } from "zod";
 
-export const WORKFLOW_DOCUMENT_VERSION = 4 as const;
+export const WORKFLOW_DOCUMENT_VERSION = 5 as const;
 
 const mediaAssetSchema = z.object({
   dataUrl: z.string(),
@@ -21,6 +21,34 @@ const baseNodeSchema = z.object({
   position: positionSchema,
 });
 
+/** Aspect presets the videoBlock supports (matches export targets). */
+export const VIDEO_ASPECT_RATIOS = ["9:16", "16:9", "1:1"] as const;
+export type VideoAspectRatio = (typeof VIDEO_ASPECT_RATIOS)[number];
+
+/** Output resolutions — Wan image-to-video accepts only these strings on fal. */
+export const VIDEO_RESOLUTIONS = ["720p", "1080p"] as const;
+export type VideoResolution = (typeof VIDEO_RESOLUTIONS)[number];
+
+/**
+ * Wan v2.7 image-to-video (`fal-ai/wan/v2.7/image-to-video`): fal accepts integer `duration`
+ * from **2 through 15** seconds per model docs.
+ */
+export const VIDEO_DURATION_SECONDS = [
+  2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+] as const;
+export type VideoDurationSec = (typeof VIDEO_DURATION_SECONDS)[number];
+
+export const VIDEO_DURATION_MIN_SEC = VIDEO_DURATION_SECONDS[0];
+export const VIDEO_DURATION_MAX_SEC = VIDEO_DURATION_SECONDS[VIDEO_DURATION_SECONDS.length - 1];
+
+export function clampVideoDurationSec(raw: unknown): VideoDurationSec {
+  const fallback = 5 satisfies VideoDurationSec;
+  const n =
+    typeof raw === "number" && Number.isFinite(raw) ? Math.round(raw) : fallback;
+  const c = Math.min(VIDEO_DURATION_MAX_SEC, Math.max(VIDEO_DURATION_MIN_SEC, n));
+  return c as VideoDurationSec;
+}
+
 export const nodeDataSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("mediaInput"),
@@ -35,6 +63,19 @@ export const nodeDataSchema = z.discriminatedUnion("kind", [
     suffix: z.string(),
     imageSize: falFluxPresetSizeSchema,
     numInferenceSteps: z.number().min(1).max(12),
+  }),
+  z.object({
+    kind: z.literal("videoBlock"),
+    label: z.string(),
+    /** Motion / camera / mood description appended to upstream text. */
+    motionPrompt: z.string(),
+    aspectRatio: z.enum(VIDEO_ASPECT_RATIOS),
+    resolution: z.enum(VIDEO_RESOLUTIONS),
+    durationSec: z
+      .number()
+      .int()
+      .min(VIDEO_DURATION_MIN_SEC)
+      .max(VIDEO_DURATION_MAX_SEC),
   }),
   z.object({
     kind: z.literal("platformExport"),
@@ -71,7 +112,12 @@ export type WorkflowNode = z.infer<typeof workflowNodeSchema>;
 export type WorkflowEdge = z.infer<typeof workflowEdgeSchema>;
 export type NodeData = z.infer<typeof nodeDataSchema>;
 
-export const NODE_TYPES = ["mediaInput", "generationBlock", "platformExport"] as const;
+export const NODE_TYPES = [
+  "mediaInput",
+  "generationBlock",
+  "videoBlock",
+  "platformExport",
+] as const;
 
 export type CanvasNodeType = (typeof NODE_TYPES)[number];
 
@@ -91,6 +137,16 @@ export function defaultNodeData(type: CanvasNodeType): NodeData {
         suffix: ", high quality ad creative, clean composition",
         imageSize: "landscape_4_3",
         numInferenceSteps: 2,
+      };
+    case "videoBlock":
+      return {
+        kind: "videoBlock",
+        label: "Animate",
+        motionPrompt:
+          "smooth slow camera push-in, gentle parallax, subtle ambient motion, cinematic ad pacing",
+        aspectRatio: "9:16",
+        resolution: "720p",
+        durationSec: 5,
       };
     case "platformExport":
       return {

@@ -22,6 +22,12 @@ export type RuntimeOutputs = Record<
       imageUrl?: string;
     }
   | {
+      type: "video";
+      url: string;
+      /** Source still passed into the video model (for previews + bundle copy). */
+      sourceImageUrl?: string;
+    }
+  | {
       type: "mediaInput";
       text: string;
       imageUrls: string[];
@@ -144,6 +150,32 @@ function collectUpstreamImageUrls(
         }
       }
     }
+  }
+  return urls;
+}
+
+/**
+ * Pull MP4 URLs from upstream `videoBlock` outputs that wire into this node's blue (image/media)
+ * pin. Used by `platformExport` so a wired video flows into the export bundle as the primary
+ * deliverable.
+ */
+function collectUpstreamVideoUrls(
+  nodeId: string,
+  incomingByTarget: Map<string, WorkflowEdge[]>,
+  outputs: RuntimeOutputs,
+): string[] {
+  const incoming = incomingByTarget.get(nodeId) ?? [];
+  const urls: string[] = [];
+  const seen = new Set<string>();
+  for (const edge of incoming) {
+    if (!isImageTargetEdge(edge, nodeId)) continue;
+    const upstream = outputs[edge.source];
+    if (!upstream || upstream.type !== "video") continue;
+    if (edge.sourceHandle !== "video") continue;
+    const u = upstream.url;
+    if (!u || seen.has(u)) continue;
+    urls.push(u);
+    seen.add(u);
   }
   return urls;
 }
@@ -510,54 +542,149 @@ export async function runWorkflowDAG(
         });
         break;
       }
+      case "videoBlock": {
+        const refImgs = collectUpstreamImageUrls(id, incomingByTarget, outputs);
+        const sourceImageUrl = refImgs[0];
+        if (!sourceImageUrl) {
+          throw new GraphError(
+            "Video block needs an upstream image wired to its blue pin (e.g. from a generation block).",
+          );
+        }
+        const upstreamText = collectUpstreamText(id, incomingByTarget, outputs).trim();
+        const motion = data.motionPrompt.trim();
+        const promptParts = [upstreamText, motion].filter(Boolean);
+        const prompt = (promptParts.join("\n\n") || motion ||
+          "smooth subtle parallax, gentle camera push-in, ad-ready motion").slice(0, 4000);
+
+        const res = await fetch("/api/fal/generation", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            intent: "image-to-video",
+            prompt,
+            imageUrl: sourceImageUrl,
+            aspectRatio: data.aspectRatio,
+            resolution: data.resolution,
+            durationSec: data.durationSec,
+          }),
+        });
+        const rawText = await res.text();
+        let parsedBody: Record<string, unknown> = {};
+        try {
+          const p = JSON.parse(rawText) as unknown;
+          if (p && typeof p === "object" && !Array.isArray(p)) {
+            parsedBody = p as Record<string, unknown>;
+          }
+        } catch {
+          /* non-JSON */
+        }
+        if (!res.ok) {
+          const msg = extractFalProxyErrorMessage(parsedBody, res.status, rawText);
+          logWorkflow("error", "runner/fal", "Video generation HTTP error", {
+            httpStatus: res.status,
+            message: msg.slice(0, 4000),
+          });
+          throw new GraphError(msg);
+        }
+        const url =
+          typeof (parsedBody.video as { url?: string } | undefined)?.url === "string"
+            ? (parsedBody.video as { url: string }).url
+            : undefined;
+        if (!url) throw new GraphError("Video generation missing URL");
+
+        outputs[id] = {
+          type: "video",
+          url,
+          sourceImageUrl,
+        };
+        onNodeComplete?.({
+          nodeId: id,
+          index: step + 1,
+          total: totalSteps,
+          label,
+          output: outputs[id],
+        });
+        break;
+      }
       case "platformExport": {
         const imageUrlsAll = collectUpstreamImageUrls(id, incomingByTarget, outputs);
+        const videoUrlsAll = collectUpstreamVideoUrls(id, incomingByTarget, outputs);
         const copy = collectUpstreamText(id, incomingByTarget, outputs);
         const caption = [copy.trim(), data.label].filter(Boolean).join("\n\n").slice(0, 2200);
 
         const httpsImages = imageUrlsAll.filter((u) => /^https:\/\//i.test(u));
-        if (httpsImages.length === 0) {
+        const httpsVideos = videoUrlsAll.filter((u) => /^https:\/\//i.test(u));
+        if (httpsImages.length === 0 && httpsVideos.length === 0) {
           throw new GraphError(
-            `${data.platform} export needs at least one upstream image with a public https URL (from the generation block image pin).`,
+            `${data.platform} export needs at least one upstream image or video with a public https URL (wire a generation block's image pin or a video block's violet pin into this export's blue pin).`,
           );
         }
 
-        const primary = httpsImages[0];
-        const imgRes = await fetch(primary);
-        if (!imgRes.ok) {
-          logWorkflow("error", "runner/export", "Export image fetch failed", {
-            nodeId: id,
-            platform: data.platform,
-            httpStatus: imgRes.status,
+        const files: { path: string; blob: Blob }[] = [];
+
+        for (let i = 0; i < httpsVideos.length; i++) {
+          const u = httpsVideos[i]!;
+          const r = await fetch(u);
+          if (!r.ok) {
+            logWorkflow("error", "runner/export", "Export video fetch failed", {
+              nodeId: id,
+              platform: data.platform,
+              httpStatus: r.status,
+            });
+            throw new GraphError("Failed to download video for export");
+          }
+          const blob = await r.blob();
+          const ext = r.headers.get("content-type")?.includes("webm") ? "webm" : "mp4";
+          const suffix = httpsVideos.length > 1 ? `-${i + 1}` : "";
+          files.push({
+            path: `platforms/${data.platform}/clip${suffix}.${ext}`,
+            blob,
           });
-          throw new GraphError("Failed to download image for export");
         }
-        const blob = await imgRes.blob();
+
+        if (httpsImages.length > 0) {
+          const primary = httpsImages[0]!;
+          const imgRes = await fetch(primary);
+          if (!imgRes.ok) {
+            logWorkflow("error", "runner/export", "Export image fetch failed", {
+              nodeId: id,
+              platform: data.platform,
+              httpStatus: imgRes.status,
+            });
+            throw new GraphError("Failed to download image for export");
+          }
+          const blob = await imgRes.blob();
+          files.push({
+            path: `platforms/${data.platform}/creative.png`,
+            blob,
+          });
+        }
+
         const manifest = {
           platform: data.platform,
           title: data.label,
           copy,
           generatedAt: new Date().toISOString(),
-          sourceImage: primary,
+          sourceImage: httpsImages[0],
           sourceImages: httpsImages,
+          sourceVideos: httpsVideos,
+          /** True when at least one video is wired into this export — drives previews + publish hints. */
+          hasVideo: httpsVideos.length > 0,
         };
-        const files: { path: string; blob: Blob }[] = [
-          {
-            path: `platforms/${data.platform}/creative.png`,
-            blob,
-          },
-          {
-            path: `platforms/${data.platform}/manifest.json`,
-            blob: new Blob([JSON.stringify(manifest, null, 2)], {
-              type: "application/json",
-            }),
-          },
-        ];
+        files.push({
+          path: `platforms/${data.platform}/manifest.json`,
+          blob: new Blob([JSON.stringify(manifest, null, 2)], {
+            type: "application/json",
+          }),
+        });
+
         outputs[id] = {
           type: "bundle",
           files,
           publish:
-            data.platform === "facebook" || data.platform === "instagram"
+            (data.platform === "facebook" || data.platform === "instagram") &&
+            httpsImages.length > 0 &&
+            httpsVideos.length === 0
               ? {
                   platform: data.platform,
                   imageUrls: httpsImages.slice(0, 10),

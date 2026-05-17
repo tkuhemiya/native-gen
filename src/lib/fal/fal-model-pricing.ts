@@ -63,4 +63,25 @@ export function falTextToImageUsdForEndpoint(
 }
 
 export const FAL_PRICING_DISCLAIMER =
-  "USD estimates from fal.ai model pages (openai/gpt-image-2/edit, openai/gpt-image-2, gpt-image-1-mini, flux/schnell, florence). Edit/text lines use placeholders; verify live pricing. Does not include retries, prompt tokens, discounts, or env overrides.";
+  "USD estimates from fal.ai model pages (openai/gpt-image-2/edit, openai/gpt-image-2, gpt-image-1-mini, flux/schnell, florence, wan v2.x i2v). Video lines are placeholders; verify live pricing. Does not include retries, prompt tokens, discounts, or env overrides.";
+
+/**
+ * Rough per-clip baseline for Wan v2.x image→video at 720p (~5s). Verify on the fal model page.
+ */
+export const FAL_WAN_I2V_PER_SECOND_USD = 0.04;
+
+/** Multipliers vs 720p baseline (placeholder until fal table is verified). */
+export const FAL_VIDEO_RESOLUTION_MULTIPLIER: Record<"720p" | "1080p", number> = {
+  "720p": 1.0,
+  "1080p": 1.5,
+};
+
+/** Single image→video call estimate for the configured fal video endpoint. */
+export function falImageToVideoUsdForEndpoint(
+  _endpointId: string,
+  durationSec: number,
+  resolution: "720p" | "1080p",
+): number {
+  const mult = FAL_VIDEO_RESOLUTION_MULTIPLIER[resolution] ?? 1;
+  return FAL_WAN_I2V_PER_SECOND_USD * durationSec * mult;
+}

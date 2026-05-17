@@ -162,10 +162,31 @@ export function validateAndFinalizeWorkflowWrite(
     assertConnectedDAG(doc.nodes, doc.edges);
     const incomingByTarget = buildIncomingByTarget(doc.edges);
     for (const node of doc.nodes) {
-      if (node.data.kind !== "generationBlock") continue;
-      const inL = incomingMediaLanes(node.id, incomingByTarget);
-      const outL = outgoingMediaLanes(node.id, doc.edges);
-      planGeneration(inL, outL);
+      if (node.data.kind === "generationBlock") {
+        const inL = incomingMediaLanes(node.id, incomingByTarget);
+        const outL = outgoingMediaLanes(node.id, doc.edges);
+        planGeneration(inL, outL);
+        continue;
+      }
+      if (node.data.kind === "videoBlock") {
+        const incoming = incomingByTarget.get(node.id) ?? [];
+        const hasImageIn = incoming.some(
+          (e) => e.targetHandle === "image" || e.targetHandle == null,
+        );
+        if (!hasImageIn) {
+          throw new GraphError(
+            `Video block "${node.data.label || node.id}" needs an image input on its blue pin (wire a generationBlock's image output or a mediaInput's image lane).`,
+          );
+        }
+        const hasVideoOut = doc.edges.some(
+          (e) => e.source === node.id && e.sourceHandle === "video",
+        );
+        if (!hasVideoOut) {
+          throw new GraphError(
+            `Video block "${node.data.label || node.id}" needs at least one outgoing wire from its violet video pin (typically into a platformExport blue pin).`,
+          );
+        }
+      }
     }
   } catch (e) {
     const message =

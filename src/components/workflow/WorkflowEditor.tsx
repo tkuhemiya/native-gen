@@ -31,6 +31,7 @@ import {
 import { GenerationBlockNode } from "@/components/workflow/nodes/GenerationBlockNode";
 import { MediaInputNode } from "@/components/workflow/nodes/MediaInputNode";
 import { PlatformExportNode } from "@/components/workflow/nodes/PlatformExportNode";
+import { VideoBlockNode } from "@/components/workflow/nodes/VideoBlockNode";
 import type { AppNode } from "@/lib/workflow/app-node";
 import { topLeftForCenteredNode } from "@/lib/workflow/node-layout";
 import {
@@ -63,6 +64,7 @@ import { estimateWorkflowFalUsd } from "@/lib/workflow/estimate-workflow-fal-usd
 const nodeTypes = {
   mediaInput: MediaInputNode,
   generationBlock: GenerationBlockNode,
+  videoBlock: VideoBlockNode,
   platformExport: PlatformExportNode,
 } satisfies NodeTypes;
 

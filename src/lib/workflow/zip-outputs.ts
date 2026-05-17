@@ -46,6 +46,16 @@ export async function zipRuntimeOutputs(
           /* skip */
         }
       }
+    } else if (out.type === "video") {
+      try {
+        const res = await fetch(out.url);
+        if (res.ok) {
+          const ext = res.headers.get("content-type")?.includes("webm") ? "webm" : "mp4";
+          addBlob(`${prefix}-generated-video.${ext}`, await res.blob());
+        }
+      } catch {
+        /* skip */
+      }
     } else if (out.type === "mediaInput") {
       if (out.text.trim()) {
         addBlob(

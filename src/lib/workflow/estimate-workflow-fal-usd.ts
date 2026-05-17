@@ -2,12 +2,14 @@ import {
   FAL_FLORENCE_CAPTION_ESTIMATE_USD,
   FAL_OPENAI_GPT_IMAGE_2_EDIT_ESTIMATE_USD,
   FAL_PRICING_DISCLAIMER,
+  falImageToVideoUsdForEndpoint,
   falTextToImageUsdForEndpoint,
 } from "@/lib/fal/fal-model-pricing";
 import {
   getFalImageEditEndpointId,
   getFalTextToImageEndpointId,
 } from "@/lib/fal/text-to-image-config";
+import { getFalImageToVideoEndpointId } from "@/lib/fal/video-config";
 import { assertConnectedDAG, GraphError } from "./graph";
 import {
   incomingMediaLanes,
@@ -51,58 +53,81 @@ export function estimateWorkflowFalUsd(doc: WorkflowDocument): EstimateWorkflowF
 
   const incomingByTarget = buildIncomingByTarget(doc.edges);
   const textToImageEndpointId = getFalTextToImageEndpointId();
+  const imageToVideoEndpointId = getFalImageToVideoEndpointId();
   const lineItems: FalCostLineItem[] = [];
   let totalUsd = 0;
 
   for (const node of doc.nodes) {
-    if (node.data.kind !== "generationBlock") continue;
+    if (node.data.kind === "generationBlock") {
+      let plan;
+      try {
+        const inL = incomingMediaLanes(node.id, incomingByTarget);
+        const outL = outgoingMediaLanes(node.id, doc.edges);
+        plan = planGeneration(inL, outL);
+      } catch (e) {
+        return { ok: false, error: e instanceof GraphError ? e.message : String(e) };
+      }
 
-    let plan;
-    try {
-      const inL = incomingMediaLanes(node.id, incomingByTarget);
-      const outL = outgoingMediaLanes(node.id, doc.edges);
-      plan = planGeneration(inL, outL);
-    } catch (e) {
-      return { ok: false, error: e instanceof GraphError ? e.message : String(e) };
+      const calls: FalCostLineCall[] = [];
+      const label = node.data.label.trim() || "Generation";
+
+      if (plan.needPassthroughText) {
+        calls.push({ intent: "text-passthrough", usd: 0, detail: "No fal call (text only)" });
+      }
+      if (plan.needCaption) {
+        calls.push({
+          intent: "image-to-text",
+          usd: FAL_FLORENCE_CAPTION_ESTIMATE_USD,
+          detail: "fal-ai/florence-2-large/caption (listed $0/compute-s on fal)",
+        });
+      }
+      if (plan.needMarketingSocialCopy && plan.needReferenceImageEdit) {
+        calls.push({
+          intent: "image-to-text",
+          usd: FAL_FLORENCE_CAPTION_ESTIMATE_USD,
+          detail: "fal-ai/florence-2-large/caption — product snippet for social copy (when wired)",
+        });
+      }
+      if (plan.needTextToImage && plan.needReferenceImageEdit) {
+        calls.push({
+          intent: "image-to-image-edit",
+          usd: FAL_OPENAI_GPT_IMAGE_2_EDIT_ESTIMATE_USD,
+          detail: `${getFalImageEditEndpointId()} · low / reduced presets`,
+        });
+      } else if (plan.needTextToImage) {
+        const usd = falTextToImageUsdForEndpoint(textToImageEndpointId, node.data.imageSize);
+        calls.push({
+          intent: "text-to-image",
+          usd,
+          detail: `${textToImageEndpointId} · ${node.data.imageSize}`,
+        });
+      }
+
+      lineItems.push({ nodeId: node.id, label, calls });
+      totalUsd += calls.reduce((a, c) => a + c.usd, 0);
+      continue;
     }
 
-    const calls: FalCostLineCall[] = [];
-    const label = node.data.label.trim() || "Generation";
-
-    if (plan.needPassthroughText) {
-      calls.push({ intent: "text-passthrough", usd: 0, detail: "No fal call (text only)" });
-    }
-    if (plan.needCaption) {
-      calls.push({
-        intent: "image-to-text",
-        usd: FAL_FLORENCE_CAPTION_ESTIMATE_USD,
-        detail: "fal-ai/florence-2-large/caption (listed $0/compute-s on fal)",
+    if (node.data.kind === "videoBlock") {
+      const label = node.data.label.trim() || "Animate";
+      const usd = falImageToVideoUsdForEndpoint(
+        imageToVideoEndpointId,
+        node.data.durationSec,
+        node.data.resolution,
+      );
+      lineItems.push({
+        nodeId: node.id,
+        label,
+        calls: [
+          {
+            intent: "image-to-video",
+            usd,
+            detail: `${imageToVideoEndpointId} · ${node.data.durationSec}s · ${node.data.resolution} · ${node.data.aspectRatio}`,
+          },
+        ],
       });
+      totalUsd += usd;
     }
-    if (plan.needMarketingSocialCopy && plan.needReferenceImageEdit) {
-      calls.push({
-        intent: "image-to-text",
-        usd: FAL_FLORENCE_CAPTION_ESTIMATE_USD,
-        detail: "fal-ai/florence-2-large/caption — product snippet for social copy (when wired)",
-      });
-    }
-    if (plan.needTextToImage && plan.needReferenceImageEdit) {
-      calls.push({
-        intent: "image-to-image-edit",
-        usd: FAL_OPENAI_GPT_IMAGE_2_EDIT_ESTIMATE_USD,
-        detail: `${getFalImageEditEndpointId()} · low / reduced presets`,
-      });
-    } else if (plan.needTextToImage) {
-      const usd = falTextToImageUsdForEndpoint(textToImageEndpointId, node.data.imageSize);
-      calls.push({
-        intent: "text-to-image",
-        usd,
-        detail: `${textToImageEndpointId} · ${node.data.imageSize}`,
-      });
-    }
-
-    lineItems.push({ nodeId: node.id, label, calls });
-    totalUsd += calls.reduce((a, c) => a + c.usd, 0);
   }
 
   return {

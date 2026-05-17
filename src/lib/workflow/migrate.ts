@@ -2,6 +2,8 @@ import { z } from "zod";
 
 import { falFluxPresetSizeSchema } from "@/lib/fal/text-to-image-config";
 import {
+  VIDEO_RESOLUTIONS,
+  clampVideoDurationSec,
   WORKFLOW_DOCUMENT_VERSION,
   workflowDocumentSchema,
   type WorkflowDocument,
@@ -182,23 +184,62 @@ export function coerceFluxToGeneration(raw: unknown): unknown {
   return { ...doc, nodes: nextNodes };
 }
 
-function bumpWorkflowVersion2To4(raw: unknown): unknown {
+function readDocumentVersion(raw: unknown): number | null {
+  if (raw === null || typeof raw !== "object") return null;
+  const v = (raw as Record<string, unknown>).version;
+  if (typeof v === "number") return v;
+  if (typeof v === "string") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function bumpWorkflowVersionToCurrent(raw: unknown): unknown {
   if (raw === null || typeof raw !== "object") return raw;
   const doc = raw as Record<string, unknown>;
-  if (doc.version === 2) return { ...doc, version: WORKFLOW_DOCUMENT_VERSION };
+  const v = doc.version;
+  if (v === 2 || v === 3 || v === 4) {
+    return { ...doc, version: WORKFLOW_DOCUMENT_VERSION };
+  }
   return raw;
 }
 
-/** Drops video pins / media payloads so documents validate against photo-only v4. */
-function stripLegacyVideoArtifacts(raw: unknown): unknown {
+/**
+ * Cleans up a botched pre-v5 video attempt that stored video fields on `generationBlock` and
+ * `mediaInput`. We only strip when the doc is from before v5 — once we're at v5 the dedicated
+ * `videoBlock` node owns video and `video` source/target handles are first-class.
+ */
+function stripLegacyVideoArtifactsIfPreV5(raw: unknown): unknown {
   if (raw === null || typeof raw !== "object") return raw;
+  const version = readDocumentVersion(raw);
+  if (version != null && version >= WORKFLOW_DOCUMENT_VERSION) return raw;
+
   const doc = raw as Record<string, unknown>;
+
+  /**
+   * Edges going to/from a `videoBlock` keep their video handles. Edges with `video` handles
+   * touching only legacy generationBlocks are dropped (those nodes lost their video output).
+   */
+  const nodeKindById = new Map<string, string>();
+  if (Array.isArray(doc.nodes)) {
+    for (const n of doc.nodes as Record<string, unknown>[]) {
+      const id = typeof n.id === "string" ? n.id : "";
+      const data = n.data as Record<string, unknown> | undefined;
+      const kind = typeof data?.kind === "string" ? data.kind : "";
+      if (id) nodeKindById.set(id, kind);
+    }
+  }
 
   const edges = Array.isArray(doc.edges)
     ? (doc.edges as Record<string, unknown>[]).filter((e) => {
         const sh = e.sourceHandle ?? null;
         const th = e.targetHandle ?? null;
-        return sh !== "video" && th !== "video";
+        const sourceKind = nodeKindById.get(String(e.source));
+        const targetKind = nodeKindById.get(String(e.target));
+        const isVideoHandle = sh === "video" || th === "video";
+        if (!isVideoHandle) return true;
+        return sourceKind === "videoBlock" || targetKind === "videoBlock";
       })
     : [];
 
@@ -302,20 +343,62 @@ export function coerceWorkflowDocumentRaw(raw: unknown): unknown {
   return { ...doc, nodes: nextNodes };
 }
 
+const ALLOWED_VIDEO_RESOLUTION = new Set<string>(VIDEO_RESOLUTIONS);
+
+/** fal-ai Wan image-to-video accepts only `720p` | `1080p`; remap legacy `480p` / invalid values. */
+export function coerceVideoBlockResolution(raw: unknown): unknown {
+  if (raw === null || typeof raw !== "object") return raw;
+  const doc = raw as Record<string, unknown>;
+  const nodes = doc.nodes;
+  if (!Array.isArray(nodes)) return raw;
+
+  const nextNodes = nodes.map((node) => {
+    if (node === null || typeof node !== "object") return node;
+    const n = node as Record<string, unknown>;
+    const data = n.data;
+    if (data === null || typeof data !== "object") return node;
+    const d = data as Record<string, unknown>;
+    if (d.kind !== "videoBlock") return node;
+
+    let resolution = d.resolution;
+    if (resolution === "480p") resolution = "720p";
+    const str = typeof resolution === "string" ? resolution : "";
+    if (!ALLOWED_VIDEO_RESOLUTION.has(str)) resolution = "720p";
+
+    return {
+      ...n,
+      data: {
+        ...d,
+        resolution,
+        durationSec: clampVideoDurationSec(d.durationSec),
+      },
+    };
+  });
+
+  return { ...doc, nodes: nextNodes };
+}
+
 /**
- * Accept current workflows; coerce legacy nodes; strip obsolete video wiring for v4.
+ * Accept current workflows; coerce legacy nodes; strip obsolete video wiring from pre-v5 docs.
+ *
+ * v5 introduced the dedicated `videoBlock` node and first-class `video` handles, so docs at v5+
+ * are passed through as-is once they validate.
  */
 export function normalizeWorkflowDocument(raw: unknown): WorkflowDocument | null {
-  const coerced = stripLegacyVideoArtifacts(
-    bumpWorkflowVersion2To4(coerceFluxToGeneration(coerceWorkflowDocumentRaw(raw))),
+  const coerced = stripLegacyVideoArtifactsIfPreV5(
+    bumpWorkflowVersionToCurrent(
+      coerceFluxToGeneration(coerceVideoBlockResolution(coerceWorkflowDocumentRaw(raw))),
+    ),
   );
-  const v4 = workflowDocumentSchema.safeParse(coerced);
-  if (v4.success) return v4.data;
+  const current = workflowDocumentSchema.safeParse(coerced);
+  if (current.success) return current.data;
 
   const v1 = v1WorkflowDocumentSchema.safeParse(raw);
   if (!v1.success) return null;
 
   const migrated = migrateV1Workflow(v1.data);
-  const check = workflowDocumentSchema.safeParse(stripLegacyVideoArtifacts(migrated));
+  const check = workflowDocumentSchema.safeParse(
+    coerceVideoBlockResolution(stripLegacyVideoArtifactsIfPreV5(migrated)),
+  );
   return check.success ? check.data : null;
 }

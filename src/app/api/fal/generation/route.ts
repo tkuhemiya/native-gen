@@ -14,6 +14,17 @@ import {
   getFalTextToImageEndpointId,
   getFalTextToImageQueuePriority,
 } from "@/lib/fal/text-to-image-config";
+import {
+  buildImageToVideoQueueInput,
+  extractFalVideoUrl,
+  getFalImageToVideoEndpointId,
+} from "@/lib/fal/video-config";
+import {
+  VIDEO_ASPECT_RATIOS,
+  VIDEO_DURATION_MAX_SEC,
+  VIDEO_DURATION_MIN_SEC,
+  VIDEO_RESOLUTIONS,
+} from "@/lib/workflow/schema";
 
 const bodySchema = z.discriminatedUnion("intent", [
   z.object({
@@ -32,6 +43,14 @@ const bodySchema = z.discriminatedUnion("intent", [
     intent: z.literal("image-to-text"),
     /** https URL or data:image base64 (large refs uploaded to fal storage server-side). */
     imageUrl: z.string().min(10).max(25 * 1024 * 1024),
+  }),
+  z.object({
+    intent: z.literal("image-to-video"),
+    prompt: z.string().min(1).max(4000),
+    imageUrl: z.string().min(10).max(25 * 1024 * 1024),
+    aspectRatio: z.enum(VIDEO_ASPECT_RATIOS),
+    resolution: z.enum(VIDEO_RESOLUTIONS),
+    durationSec: z.number().int().min(VIDEO_DURATION_MIN_SEC).max(VIDEO_DURATION_MAX_SEC),
   }),
 ]);
 
@@ -173,6 +192,31 @@ export async function POST(req: Request) {
           );
         }
         return NextResponse.json({ text: caption });
+      }
+      case "image-to-video": {
+        const endpointId = getFalImageToVideoEndpointId();
+        assertSafeFalEndpointId(endpointId);
+        const hostedUrl = await resolveImageUrlForFal(payload.imageUrl);
+        const input = buildImageToVideoQueueInput(endpointId, {
+          imageUrl: hostedUrl,
+          prompt: payload.prompt,
+          aspectRatio: payload.aspectRatio,
+          resolution: payload.resolution,
+          durationSec: payload.durationSec,
+        });
+        const result = await fal.subscribe(endpointId, {
+          input,
+          logs: true,
+          priority,
+        });
+        const url = extractFalVideoUrl(result.data);
+        if (!url) {
+          return NextResponse.json(
+            { error: "Fal did not return a video URL" },
+            { status: 502 },
+          );
+        }
+        return NextResponse.json({ video: { url } });
       }
       default: {
         const _never: never = payload;
