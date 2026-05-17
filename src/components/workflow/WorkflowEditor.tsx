@@ -563,7 +563,11 @@ export function WorkflowEditor() {
         workflowNodes,
         rfEdgesToWorkflow(edges),
         {
-          onProgress: (p) => setStatus(p.message ?? p.phase),
+          onProgress: (p) => {
+            setStatus(p.message ?? p.phase);
+            // Highlight the node currently executing (before slow fal/export work finishes).
+            if (p.step?.nodeId) setActiveNodeId(p.step.nodeId);
+          },
           onNodeComplete: (e) => {
             partialRunOutputsRef.current = {
               ...partialRunOutputsRef.current,
