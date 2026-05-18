@@ -57,14 +57,39 @@ export function FlowContextMenuPortal({
     >
       {menu.kind === "pane" ? (
         <>
-          <p className={labelCls}>Input</p>
+          <p className={labelCls}>Primitives</p>
           <button
             type="button"
             role="menuitem"
             className={itemCls}
-            onClick={() => onAddBlock("mediaInput")}
+            onClick={() => onAddBlock("textPrimitive")}
           >
-            Brief / posts
+            Text primitive
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className={itemCls}
+            onClick={() => onAddBlock("imagePrimitive")}
+          >
+            Image primitive
+          </button>
+          <p className={labelCls}>Scene graph</p>
+          <button
+            type="button"
+            role="menuitem"
+            className={itemCls}
+            onClick={() => onAddBlock("sceneCompose")}
+          >
+            Scene composer
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className={itemCls}
+            onClick={() => onAddBlock("sceneJoin")}
+          >
+            Join scenes (timeline)
           </button>
           <p className={labelCls}>Generation</p>
           <button
@@ -81,16 +106,16 @@ export function FlowContextMenuPortal({
             className={itemCls}
             onClick={() => onAddBlock("videoBlock")}
           >
-            Animate · video block (i2v)
+            Animate · image → video
           </button>
-          <p className={labelCls}>Delivery</p>
+          <p className={labelCls}>Output</p>
           <button
             type="button"
             role="menuitem"
             className={itemCls}
-            onClick={() => onAddBlock("platformExport")}
+            onClick={() => onAddBlock("outputBlock")}
           >
-            Platform export
+            Preview · download
           </button>
           <p className={labelCls}>Canvas</p>
           <button type="button" role="menuitem" className={itemCls} onClick={() => onTidyLayout()}>

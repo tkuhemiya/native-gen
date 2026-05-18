@@ -1,7 +1,11 @@
 import { falFluxPresetSizeSchema } from "@/lib/fal/text-to-image-config";
 import { z } from "zod";
 
-import { assertConnectedDAG, GraphError } from "./graph";
+import {
+  assertConnectedDAG,
+  GraphError,
+  withSceneJoinSyntheticEdges,
+} from "./graph";
 import { incomingMediaLanes, outgoingMediaLanes, planGeneration } from "./generation-plan";
 import { layoutWorkflowNodesCompactDAG } from "./node-layout";
 import { reconcileGenerationImageSizes } from "./platform-aspect-presets";
@@ -26,9 +30,9 @@ const generationSettingsSchema = z.object({
   numInferenceSteps: z.number().int().min(1).max(12).optional(),
 });
 
-const planMediaStageSchema = z.object({
+const planTextPrimitiveStageSchema = z.object({
   id: z.string().min(1),
-  kind: z.literal("mediaInput"),
+  kind: z.literal("textPrimitive"),
   label: z.string().optional(),
 });
 
@@ -36,32 +40,19 @@ const planGenerationStageSchema = z.object({
   id: z.string().min(1),
   kind: z.literal("generation"),
   label: z.string().min(1),
-  /** Appended by the runner to upstream text; keep look vs motion split here. */
   suffix: z.string(),
-  /** What this block outputs (declares pins). Must match how downstream stages reference this block. */
   outputs: z.array(modalitySchema).min(1),
-  /**
-   * Incoming wires: target pin on THIS block -> where it comes from.
-   * Omit keys the block does not need; compiler may add `text` from `mediaInput` when obvious.
-   */
   inputs: z.record(modalitySchema, stageInputPinSchema).optional(),
   settings: generationSettingsSchema.optional(),
 });
 
-const planExportStageSchema = z.object({
+const planOutputStageSchema = z.object({
   id: z.string().min(1),
-  kind: z.literal("platformExport"),
+  kind: z.literal("outputBlock"),
   label: z.string().optional(),
-  platform: z.enum(["youtube", "facebook", "instagram", "tiktok"]),
-  /** Default: mediaInput stage id if omitted and a single mediaInput exists */
-  copyFromStageId: z.string().optional(),
-  /** Primary image source for export (also use moreImageFromStageIds for extra wired images). */
-  imageFromStageId: z.string().optional(),
-  /**
-   * Additional generation stages (each must output image) wired into the same export image pin.
-   * Use for multi-subject carousels / grids so each block stays editable on the canvas.
-   */
-  moreImageFromStageIds: z.array(z.string().min(1)).optional(),
+  mediaFromStageId: z.string().min(1),
+  /** Which outbound pin on the upstream node feeds preview/export. */
+  sourcePin: z.enum(["image", "video", "text"]).default("image"),
 });
 
 export const workflowPlanSchema = z.object({
@@ -73,9 +64,9 @@ export const workflowPlanSchema = z.object({
   stages: z
     .array(
       z.discriminatedUnion("kind", [
-        planMediaStageSchema,
+        planTextPrimitiveStageSchema,
         planGenerationStageSchema,
-        planExportStageSchema,
+        planOutputStageSchema,
       ]),
     )
     .min(2),
@@ -83,9 +74,14 @@ export const workflowPlanSchema = z.object({
 
 export type WorkflowPlan = z.infer<typeof workflowPlanSchema>;
 
-/**
- * Repair common LLM mistakes before Zod (wrong kind casing, platform: "copy", string outputs, missing version).
- */
+type EdgeSpec = {
+  fromStageId: string;
+  toStageId: string;
+  sourceHandle: "text" | "image" | "video";
+  targetHandle: "text" | "image" | "media";
+};
+
+/** Repair common LLM mistakes before Zod. */
 export function normalizeWorkflowPlanRaw(input: unknown): unknown {
   if (input === null || typeof input !== "object" || Array.isArray(input)) return input;
   const o = input as Record<string, unknown>;
@@ -110,86 +106,54 @@ function normalizeWorkflowPlanStageRaw(st: unknown): unknown {
 
   if (typeof s.kind === "string") {
     const lower = s.kind.trim().toLowerCase().replace(/[\s_-]+/g, "");
-    const kindAliases: Record<string, "mediaInput" | "generation" | "platformExport"> = {
-      mediainput: "mediaInput",
-      mediain: "mediaInput",
-      mediaingest: "mediaInput",
-      ingest: "mediaInput",
-      input: "mediaInput",
-      campaigninput: "mediaInput",
+    const kindAliases: Record<string, WorkflowPlan["stages"][number]["kind"]> = {
+      mediainput: "textPrimitive",
+      mediain: "textPrimitive",
+      ingest: "textPrimitive",
+      input: "textPrimitive",
+      textprimitive: "textPrimitive",
+      text: "textPrimitive",
       generation: "generation",
       gen: "generation",
       generate: "generation",
-      generator: "generation",
-      diffusion: "generation",
-      imagegen: "generation",
-      platformexport: "platformExport",
-      export: "platformExport",
-      platform: "platformExport",
-      output: "platformExport",
-      destination: "platformExport",
-      publish: "platformExport",
+      platformexport: "outputBlock",
+      export: "outputBlock",
+      platform: "outputBlock",
+      output: "outputBlock",
+      outputblock: "outputBlock",
+      destination: "outputBlock",
+      publish: "outputBlock",
     };
     if (kindAliases[lower]) s.kind = kindAliases[lower];
   }
 
   const kindStr = typeof s.kind === "string" ? s.kind : "";
-  if (!["mediaInput", "generation", "platformExport"].includes(kindStr)) {
+  if (!["textPrimitive", "generation", "outputBlock"].includes(kindStr)) {
     const t = s.type;
     if (typeof t === "string") {
       const tl = t.trim().toLowerCase().replace(/[\s_-]+/g, "");
-      if (tl === "media" || tl === "mediainput") s.kind = "mediaInput";
+      if (tl === "media" || tl === "mediainput") s.kind = "textPrimitive";
       else if (tl === "generation" || tl === "gen") s.kind = "generation";
-      else if (tl === "export" || tl === "output" || tl === "platformexport") s.kind = "platformExport";
+      else if (tl === "export" || tl === "output") s.kind = "outputBlock";
     }
   }
 
   if (s.kind === "generation") {
-    if (typeof s.outputs === "string" && s.outputs.trim()) {
-      s.outputs = [s.outputs.trim()];
+    if (typeof s.outputs === "string" && String(s.outputs).trim()) {
+      s.outputs = [String(s.outputs).trim()];
     }
     if (Array.isArray(s.outputs)) {
       const filtered = (s.outputs as unknown[]).filter((x) => x !== "video");
       s.outputs = filtered.length > 0 ? filtered : ["image"];
     }
-    if (s.inputs && typeof s.inputs === "object" && !Array.isArray(s.inputs)) {
-      const ins = { ...(s.inputs as Record<string, unknown>) };
-      delete ins.video;
-      s.inputs = ins;
+  }
+
+  if (s.kind === "outputBlock") {
+    if (typeof s.mediaFromStageId !== "string" && typeof s.imageFromStageId === "string") {
+      s.mediaFromStageId = s.imageFromStageId;
     }
-  }
-
-  if (s.kind === "platformExport") {
-    delete s.videoFromStageId;
-  }
-
-  if (s.kind === "platformExport" && typeof s.platform === "string") {
-    const pl = s.platform.trim().toLowerCase();
-    const fixPlatform: Record<string, "youtube" | "facebook" | "instagram" | "tiktok"> = {
-      ig: "instagram",
-      insta: "instagram",
-      instagram: "instagram",
-      fb: "facebook",
-      facebook: "facebook",
-      meta: "facebook",
-      yt: "youtube",
-      youtube: "youtube",
-      tiktok: "tiktok",
-      tt: "tiktok",
-    };
-    if (fixPlatform[pl]) {
-      s.platform = fixPlatform[pl];
-    } else if (pl === "copy" || pl === "caption" || pl === "text" || pl === "description") {
-      s.platform = "instagram";
-      if (typeof s.copyFromStageId !== "string" || !String(s.copyFromStageId).trim()) {
-        s.copyFromStageId = "media";
-      }
-    }
-  }
-
-  if (s.kind === "platformExport" && s.moreImageFromStageIds != null && !Array.isArray(s.moreImageFromStageIds)) {
-    if (typeof s.moreImageFromStageIds === "string" && s.moreImageFromStageIds.trim()) {
-      s.moreImageFromStageIds = [s.moreImageFromStageIds.trim()];
+    if (typeof s.sourcePin !== "string" && typeof s.mediaPin === "string") {
+      s.sourcePin = s.mediaPin;
     }
   }
 
@@ -200,13 +164,6 @@ export function safeParseWorkflowPlan(data: unknown) {
   return workflowPlanSchema.safeParse(normalizeWorkflowPlanRaw(data));
 }
 
-type EdgeSpec = {
-  fromStageId: string;
-  toStageId: string;
-  sourceHandle: "text" | "image";
-  targetHandle: "text" | "image";
-};
-
 function uniqueStageIds(stages: WorkflowPlan["stages"]): string[] {
   const ids = stages.map((s) => s.id);
   const dup = ids.filter((id, i) => ids.indexOf(id) !== i);
@@ -216,20 +173,15 @@ function uniqueStageIds(stages: WorkflowPlan["stages"]): string[] {
   return ids;
 }
 
-/**
- * Infer missing `text` input from the sole mediaInput when the generation block needs upstream copy
- * (text→image plus optional brief on the text pin).
- */
-function autoTextFromMedia(
+function autoTextFromStorySeed(
   stage: Extract<WorkflowPlan["stages"][number], { kind: "generation" }>,
   inputs: NonNullable<typeof stage.inputs>,
-  mediaStageId: string,
+  seedId: string,
 ): void {
   const outs = new Set(stage.outputs);
   if (inputs.text) return;
-
   if (outs.has("image") && !inputs.image) {
-    inputs.text = { fromStageId: mediaStageId, pin: "text" };
+    inputs.text = { fromStageId: seedId, pin: "text" };
   }
 }
 
@@ -237,21 +189,19 @@ function collectEdgeSpecs(plan: WorkflowPlan): EdgeSpec[] {
   const stages = plan.stages;
   uniqueStageIds(stages);
 
-  const mediaStages = stages.filter((s) => s.kind === "mediaInput");
-  if (mediaStages.length !== 1) {
-    throw new GraphError("Plan must include exactly one mediaInput stage");
+  const seeds = stages.filter((s) => s.kind === "textPrimitive");
+  if (seeds.length !== 1) {
+    throw new GraphError("Plan must include exactly one textPrimitive seed stage");
   }
-  const mediaStageId = mediaStages[0]!.id;
+  const seedId = seeds[0]!.id;
 
   const byId = new Map(stages.map((s) => [s.id, s] as const));
-
   const specs: EdgeSpec[] = [];
 
   for (const st of stages) {
     if (st.kind !== "generation") continue;
-
     const inputs: NonNullable<typeof st.inputs> = { ...(st.inputs ?? {}) };
-    autoTextFromMedia(st, inputs, mediaStageId);
+    autoTextFromStorySeed(st, inputs, seedId);
 
     for (const [targetHandle, pin] of Object.entries(inputs) as [
       keyof typeof inputs,
@@ -269,10 +219,9 @@ function collectEdgeSpecs(plan: WorkflowPlan): EdgeSpec[] {
       });
     }
 
-    /* Validate declared outputs cover what downstream expects — light check */
     const outSet = new Set(st.outputs);
     for (const other of stages) {
-      if (other.kind !== "generation" && other.kind !== "platformExport") continue;
+      if (other.kind !== "generation" && other.kind !== "outputBlock") continue;
       if (other.kind === "generation") {
         const ins = other.inputs ?? {};
         for (const pin of Object.values(ins)) {
@@ -283,16 +232,14 @@ function collectEdgeSpecs(plan: WorkflowPlan): EdgeSpec[] {
           }
         }
       }
-      if (other.kind === "platformExport") {
-        const imageRefs = [
-          ...(other.imageFromStageId ? [other.imageFromStageId] : []),
-          ...(other.moreImageFromStageIds ?? []),
-        ];
-        for (const refId of imageRefs) {
-          if (refId === st.id && !outSet.has("image")) {
-            throw new GraphError(
-              `Stage "${st.id}" must list "image" in outputs because export references it for images`,
-            );
+      if (other.kind === "outputBlock") {
+        if (other.mediaFromStageId === st.id) {
+          const pin = other.sourcePin ?? "image";
+          if (pin === "image" && !outSet.has("image")) {
+            throw new GraphError(`Generation "${st.id}" must output image for "${other.id}"`);
+          }
+          if (pin === "text" && !outSet.has("text")) {
+            throw new GraphError(`Generation "${st.id}" must output text for "${other.id}"`);
           }
         }
       }
@@ -300,40 +247,18 @@ function collectEdgeSpecs(plan: WorkflowPlan): EdgeSpec[] {
   }
 
   for (const st of stages) {
-    if (st.kind !== "platformExport") continue;
-
-    const copyId = st.copyFromStageId ?? mediaStageId;
-    if (!byId.has(copyId)) {
-      throw new GraphError(`Unknown copyFromStageId "${copyId}"`);
-    }
+    if (st.kind !== "outputBlock") continue;
+    const pin = st.sourcePin ?? "image";
+    const srcHandle: "text" | "image" | "video" =
+      pin === "video" ? "video" : pin === "text" ? "text" : "image";
     specs.push({
-      fromStageId: copyId,
+      fromStageId: st.mediaFromStageId,
       toStageId: st.id,
-      sourceHandle: "text",
-      targetHandle: "text",
+      sourceHandle: srcHandle,
+      targetHandle: "media",
     });
-
-    const imageStageIds = [
-      ...(st.imageFromStageId ? [st.imageFromStageId] : []),
-      ...(st.moreImageFromStageIds ?? []),
-    ];
-    const seenImgStages = new Set<string>();
-    for (const imgId of imageStageIds) {
-      if (seenImgStages.has(imgId)) continue;
-      seenImgStages.add(imgId);
-      if (!byId.has(imgId)) {
-        throw new GraphError(`Unknown image stage id "${imgId}"`);
-      }
-      specs.push({
-        fromStageId: imgId,
-        toStageId: st.id,
-        sourceHandle: "image",
-        targetHandle: "image",
-      });
-    }
   }
 
-  /* Dedupe identical specs */
   const key = (e: EdgeSpec) =>
     `${e.fromStageId}|${e.toStageId}|${e.sourceHandle}|${e.targetHandle}`;
   const seen = new Set<string>();
@@ -355,7 +280,7 @@ function collectEdgeSpecs(plan: WorkflowPlan): EdgeSpec[] {
   for (const id of genStageIds) {
     if (!genWithOutbound.has(id)) {
       throw new GraphError(
-        `Generation stage "${id}" has no outgoing wires. Connect it to platformExport (imageFromStageId / moreImageFromStageIds — with "image" in outputs) or wire its output into another generation stage's inputs.`,
+        `Generation stage "${id}" has no outgoing wires — connect it to another generation stage or an output preview.`,
       );
     }
   }
@@ -373,10 +298,6 @@ export function buildIncomingByTarget(edges: WorkflowEdge[]): Map<string, Workfl
   return m;
 }
 
-/**
- * Turn a high-level plan (ordered stages + modality wiring) into a persisted workflow document.
- * Fills `generationBlock` defaults; the model only supplies labels, suffixes, wiring, and optional settings.
- */
 export function compileWorkflowPlanToDocument(
   plan: WorkflowPlan,
   ctx: { brief: string },
@@ -393,16 +314,18 @@ export function compileWorkflowPlanToDocument(
       const id = stageIdToNodeId.get(st.id)!;
       const position = { x: index * 340, y: 0 };
 
-      if (st.kind === "mediaInput") {
+      if (st.kind === "textPrimitive") {
         return {
           id,
-          type: "mediaInput",
+          type: "textPrimitive",
           position,
           data: {
-            kind: "mediaInput",
-            label: st.label ?? "Brief / posts",
+            kind: "textPrimitive",
+            label: st.label ?? "Story seed",
+            purpose: "",
+            prompt: "",
             value: ctx.brief.trim(),
-            images: [],
+            locked: false,
           },
         };
       }
@@ -423,16 +346,15 @@ export function compileWorkflowPlanToDocument(
         };
       }
 
-      const base = defaultNodeData("platformExport");
+      const base = defaultNodeData("outputBlock");
       return {
         id,
-        type: "platformExport",
+        type: "outputBlock",
         position,
         data: {
           ...base,
-          kind: "platformExport",
+          kind: "outputBlock",
           label: st.label ?? base.label,
-          platform: st.platform,
         },
       };
     });
@@ -445,7 +367,8 @@ export function compileWorkflowPlanToDocument(
       targetHandle: e.targetHandle,
     }));
 
-    assertConnectedDAG(nodes, edges);
+    const graphEdges = withSceneJoinSyntheticEdges(nodes, edges);
+    assertConnectedDAG(nodes, graphEdges);
 
     const skipImageInference = new Set<string>();
     for (const st of plan.stages) {

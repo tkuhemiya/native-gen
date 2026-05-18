@@ -10,7 +10,7 @@ import {
   getFalTextToImageEndpointId,
 } from "@/lib/fal/text-to-image-config";
 import { getFalImageToVideoEndpointId } from "@/lib/fal/video-config";
-import { assertConnectedDAG, GraphError } from "./graph";
+import { assertConnectedDAG, GraphError, withSceneJoinSyntheticEdges } from "./graph";
 import {
   incomingMediaLanes,
   outgoingMediaLanes,
@@ -46,7 +46,7 @@ export type EstimateWorkflowFalUsdResult =
  */
 export function estimateWorkflowFalUsd(doc: WorkflowDocument): EstimateWorkflowFalUsdResult {
   try {
-    assertConnectedDAG(doc.nodes, doc.edges);
+    assertConnectedDAG(doc.nodes, withSceneJoinSyntheticEdges(doc.nodes, doc.edges));
   } catch (e) {
     return { ok: false, error: e instanceof GraphError ? e.message : String(e) };
   }
@@ -79,13 +79,6 @@ export function estimateWorkflowFalUsd(doc: WorkflowDocument): EstimateWorkflowF
           intent: "image-to-text",
           usd: FAL_FLORENCE_CAPTION_ESTIMATE_USD,
           detail: "fal-ai/florence-2-large/caption (listed $0/compute-s on fal)",
-        });
-      }
-      if (plan.needMarketingSocialCopy && plan.needReferenceImageEdit) {
-        calls.push({
-          intent: "image-to-text",
-          usd: FAL_FLORENCE_CAPTION_ESTIMATE_USD,
-          detail: "fal-ai/florence-2-large/caption — product snippet for social copy (when wired)",
         });
       }
       if (plan.needTextToImage && plan.needReferenceImageEdit) {

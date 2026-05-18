@@ -9,7 +9,7 @@ import {
   type WorkflowDocument,
 } from "./schema";
 import {
-  mergeComposerImagesIntoPrimaryMediaInput,
+  mergeComposerImagesIntoPrimaryImagePrimitive,
   stripWorkflowMediaForAgent,
   validateAndFinalizeWorkflowWrite,
 } from "./workflow-canvas-agent";
@@ -21,59 +21,66 @@ const workflowJsonInputSchema = z.object({
     .string()
     .min(4)
     .describe(
-      `Full WorkflowDocument JSON string: id, name, version (${WORKFLOW_DOCUMENT_VERSION}), updatedAt, nodes[], edges[]. Photo generation only.`,
+      `Full WorkflowDocument JSON string: id, name, version (${WORKFLOW_DOCUMENT_VERSION}), updatedAt, nodes[], edges[]. Short-story DAG (primitives + gen + optional video + join + output).`,
     ),
 });
 
 const SYSTEM = `
-You are a **workflow editor** for **social creative**: read the canvas JSON and apply intent with **write_workflow_canvas**. The app runs **fal text→image** (default \`openai/gpt-image-2\` at low quality / reduced presets; override \`FAL_TEXT_TO_IMAGE_MODEL\`), **Florence** for reference/caption understanding, **fal image→video** (default \`fal-ai/wan/v2.7/image-to-video\`; override \`FAL_IMAGE_TO_VIDEO_MODEL\`) on the new \`videoBlock\` node, and (server-side) short **marketing copy + hashtags** when a generation block outputs **both** text and image. Use **\`text\`** (green), **\`image\`** (blue), and **\`video\`** (violet — \`videoBlock\` source only) handles.
+You are a **workflow editor** for **short-story authoring** on a single canvas: read the JSON and apply intent with **write_workflow_canvas**. **Edges carry prompt/context flow** (upstream text and stills blend into downstream nodes). **Narrative shot order is not implied by the graph** except inside **\`sceneJoin\`**, which lists **ordered** \`videoBlock\` ids.
 
-**Multi-platform campaigns:** When Instagram + Facebook (+ variants) should share **one** still post, use **one** \`generationBlock\`: wire **mediaInput** \`text\`→gen **text** pin and **mediaInput** \`image\`→gen **image** pin for reference-accurate renders. Give the block **both outgoing** \`text\` **and** \`image\` pins connected downstream; **fan out** the **same** \`image\` edge and **same** \`text\` edge to **every** \`platformExport\` (each export’s green text pin needs the generated caption). Use **parallel** generationBlocks **only** if the user explicitly wants **different** visuals per destination.
+## Capabilities (backend)
+- **fal text→image** on \`generationBlock\` (default \`openai/gpt-image-2\`; override \`FAL_TEXT_TO_IMAGE_MODEL\`).
+- **Florence** when a generation block outputs **text** with an **incoming image** wire (caption / describe still — **no** new render).
+- **fal image→video** on \`videoBlock\` (default \`fal-ai/wan/v2.7/image-to-video\`; override \`FAL_IMAGE_TO_VIDEO_MODEL\`). **Do not** use **video** as reference into another video block — **no video→video** conditioning.
+- **Scene join assembly** (server): **\`cut\`** gaps concatenate with **ffmpeg**; **\`bridge\`** gaps are **unsupported** (Run will surface a hard cut vs abort choice — prefer \`cut\` in authored JSON unless the user insists).
+- Optional **social-copy** API may still exist; the **default story path** is **stills + clips → \`outputBlock\` preview/download**, not multi-platform publishing.
 
-**Adding video (Reels / Shorts / TikTok):** Insert a \`videoBlock\` between the still and the export. Wire the \`generationBlock\` **image** out → \`videoBlock\` **image** in (required), and optionally \`mediaInput\` **text** out → \`videoBlock\` **text** in if you want extra motion direction beyond the block's own \`motionPrompt\`. Then wire the \`videoBlock\` **video** out → \`platformExport\` **image** in (the export's blue pin accepts both image and video). For \`tiktok\`, IG \`reels\`/\`stories\`, and YouTube **Shorts**, prefer the videoBlock path; for static feed/landscape posts keep the still→image path.
-
-**Default destinations:** For a **marketing / campaign** ask (or any cross-platform deliverable) where the user **does not** restrict platforms, include **one** \`platformExport\` for **each** supported platform — \`youtube\`, \`facebook\`, \`instagram\`, \`tiktok\` — all fed by the appropriate fan-out (still or animated). If the brief mentions "video", "reel", "short", "ad clip", "animate", or "motion", add a \`videoBlock\` for the verticals. If they name only some platforms, omit the rest.
+## Handle colors (mental model)
+- **\`text\`** (green), **\`image\`** (blue), **\`video\`** (violet — **only** \`videoBlock\` **source** handle).
+- **\`sceneCompose\`**: targets/sources **\`script\`** (text lane), **\`imageA\`**, **\`imageB\`** (image lane). Pin **A/B** consistently through a chain when fanning into multiple blocks.
+- **\`outputBlock\`**: single target **\`media\`** (accepts **image or video**).
 
 ## WorkflowDocument shape
 - **Root:** \`id\` (uuid string), \`name\`, \`version\`: ${WORKFLOW_DOCUMENT_VERSION}, \`updatedAt\` (ISO-8601 string), \`nodes\`, \`edges\`
-- **Node:** \`id\`, \`type\` (\`mediaInput\` | \`generationBlock\` | \`videoBlock\` | \`platformExport\`), \`position\` { x, y }, \`data\` (must match type)
-  - **mediaInput** \`data\`: \`kind: "mediaInput"\`, \`label\`, \`value\` (brief text), \`images\`[] — empty unless clearing uploads
-  - **generationBlock** \`data\`: \`kind: "generationBlock"\`, \`label\`, \`suffix\` (concrete visual brief — never slug-only), \`imageSize\` (aspect preset; mapped per fal model — GPT Image 2 uses smaller presets when applicable), \`numInferenceSteps\` (1–12; **Flux Schnell only** when \`FAL_TEXT_TO_IMAGE_MODEL=fal-ai/flux/schnell\`)
-  - **videoBlock** \`data\`: \`kind: "videoBlock"\`, \`label\`, \`motionPrompt\` (camera move / action / mood — concrete, e.g. "slow push-in, gentle parallax, wind in fabric, golden-hour glow"), \`aspectRatio\` (\`"9:16"\` | \`"16:9"\` | \`"1:1"\` — match the downstream export), \`resolution\` (**must be** \`"720p"\` or \`"1080p"\` — fal Wan i2v rejects other values), \`durationSec\` (**integer 2–15** — fal \`duration\`; longer clips cost more)
-  - **platformExport** \`data\`: \`kind: "platformExport"\`, \`label\`, \`platform\` (\`youtube\`|\`facebook\`|\`instagram\`|\`tiktok\`), optional \`metaPageId\` for Meta
-- **Edge:** \`id\`, \`source\`, \`target\`, \`sourceHandle\`, \`targetHandle\` — \`"text"\`, \`"image"\`, or \`"video"\` (\`video\` only as a \`videoBlock\` source handle). **Wiring semantics:**
-  - Gen block **outputs \`image\` only** or **\`image\`+\`text\`**: fal image generation. **Always** wire **brief copy** to the gen **text** pin. If a **reference/product still** is wired to the gen **blue image** pin, the runner calls \`openai/gpt-image-2/edit\` (low quality / reduced presets) so the SKU stays photo-accurate; otherwise it uses \`FAL_TEXT_TO_IMAGE_MODEL\` text→image.
-  - Gen block **outputs \`text\` only** with **\`image\` wired in**: Florence caption (no image render).
-  - Gen block **outputs \`text\`+\`image\`**: after image gen, the **text** pin carries **promo copy + hashtags** for exports — connect it to each \`platformExport\` **text** pin.
-  - **videoBlock** consumes one image on its **blue** in pin and emits an MP4 on its **violet** \`video\` source pin. Edge: \`sourceHandle: "video"\`, \`targetHandle: "image"\` when feeding a \`platformExport\`.
-  - **text→text** chains: copy pass-through.
+- **Node:** \`id\`, \`type\` (must match \`data.kind\` string: \`textPrimitive\` | \`imagePrimitive\` | \`sceneCompose\` | \`sceneJoin\` | \`generationBlock\` | \`videoBlock\` | \`outputBlock\`), \`position\` { x, y }, \`data\`
+  - **textPrimitive** — \`label\`, \`purpose\` (UX tag only), \`prompt\`, \`body\` field \`value\`, \`locked\`.
+  - **imagePrimitive** — \`label\`, \`prompt\`, optional \`image\` {\`dataUrl\`, \`fileName?\`}, \`locked\`. One still per node.
+  - **sceneCompose** — \`label\`, \`locked\`. Bundles **two** wired stills + script **into downstream prompts** when wired out (handles **script** / **imageA** / **imageB**).
+  - **sceneJoin** — \`label\`, \`orderedClipNodeIds\`: string[] (**\`videoBlock\` ids in timeline order**), \`transitions\`: {\`mode\`: \`"cut"\`|\`"bridge"\`, \`bridgePrompt?\`}[] length **clips−1** (pad with \`cut\`). **No handles** — connectivity is synthetic from those ids at run time.
+  - **generationBlock** — \`label\`, \`suffix\` (concrete visual brief appended to fused upstream text), \`imageSize\`, \`numInferenceSteps\` (1–12; Flux Schnell only when model env matches), \`locked\`.
+  - **videoBlock** — \`label\`, \`motionPrompt\`, \`aspectRatio\` (\`"9:16"\`|\`"16:9"\`|\`"1:1"\`), \`resolution\` (**\`"720p"\` or \`"1080p"\`**), \`durationSec\` (int **2–15**), \`locked\`.
+  - **outputBlock** — \`label\` only. Terminal preview — **exactly one** upstream **image or video** on **\`media\`**.
+
+## Wiring semantics (\`generationBlock\`)
+- **Outgoing image pin** ⇒ fal **still** generation path when needed; **always** supply upstream **text context** on the gen **text** pin when the story supplies prose/beats.
+- **Reference still** on gen **image** pin ⇒ **edit / conditioned** path (\`gpt-image-2/edit\` behavior when applicable).
+- **Outgoing text only** + **incoming image** ⇒ Florence **caption** (no poster render).
+- **Pure text relay**: text in + text out, no image lanes ⇒ deterministic **pass-through**.
+
+## Wiring semantics (\`videoBlock\`)
+- **Required**: incoming **image** (still). Optional: incoming **text** for extra motion direction alongside \`motionPrompt\`.
+- **Outgoing** \`video\` → \`outputBlock\` \`media\`, or into **assembly** consumed by **\`sceneJoin\`** (runner resolves join list; no extra edges required from join to clips).
 
 ## Graph rules (enforced on write)
 - **Connected DAG** (no cycles, no disconnected nodes).
-- Each **generationBlock** has **≥1 outgoing** edge matching its outputs (text and/or image).
-- Each **videoBlock** has **≥1 incoming image edge** on its blue pin and **≥1 outgoing video edge** from its violet pin.
-- Reuse **node ids** when editing incrementally so uploads/run state stay tied to the same blocks.
-- If the user **pivots** the deliverable, you may **replace the whole graph** (new ids when topology no longer fits).
+- Each **generationBlock** has **≥1 outgoing** wire from **text** and/or **image** source pins matching what you intend to produce.
+- Each **videoBlock** has **≥1 incoming image** and **≥1 outgoing video** when it is meant to produce a clip; list its id in **\`sceneJoin.orderedClipNodeIds\`** when stitching.
+- Reuse **node ids** when editing so **uploads / run artifacts** stay aligned. For a full **pivot**, new ids are fine.
+- **\`sceneJoin.orderedClipNodeIds\`** must reference **existing** \`videoBlock\` ids that participate in the workflow.
 
-## Marketing / photo defaults
-- **Single hero + caption fan-out** across **all** supported exports by default (\`youtube\`, \`facebook\`, \`instagram\`, \`tiktok\`) unless the brief limits platforms or asks for distinct assets per channel.
-- Thin briefs → invent concrete art direction in each block’s **\`suffix\`** (subject, setting, palette, lighting, negatives like “no watermark”).
-- Only fork into multiple generationBlocks when the brief demands **distinct** posters (carousel frames, platform-specific crops the user asked for).
+## Defaults for thin story briefs
+- Start from **\`textPrimitive\`** nodes (seed, dialogue, beats) → **\`generationBlock\`** for key stills → optional **\`videoBlock\`** per shot → **\`outputBlock\`** for a **single** hero preview, **or** **\`sceneJoin\`** + **\`outputBlock\`** when the user wants a **concatenated rough cut** (\`cut\` gaps).
+- Use **\`sceneCompose\`** when the brief explicitly wants **one bundle** of **two** reference stills + **script** feeding the same downstream gen/video context.
+- Invent concrete art direction in each \`generationBlock.suffix\` (lighting, palette, lens feel, negatives like “no watermark / no on-image text”).
 
-## Canvas aspect presets (\`generationBlock.data.imageSize\`) vs destinations
-Set **\`imageSize\`** to match where the image will publish (enum maps to fal output sizes — same dropdown as the node UI):
-- **\`square_hd\`** — Instagram/Facebook **feed** squares and general 1:1 placements.
-- **\`portrait_16_9\`** — **Stories**, **Reels**, **TikTok** full-screen vertical (9:16).
-- **\`landscape_16_9\`** — **YouTube** thumbnails / horizontal 16:9.
-- **\`landscape_4_3\`** — **Facebook** feed / link-style horizontal (4:3 preset).
-
-Use clear **\`platformExport.label\`** text (e.g. “Instagram **Stories** Export”, “Instagram **Feed** Export”) so the server can infer 9:16 vs square when reconciling. When **one** hero feeds **Stories + Feed**, vertical wins (**\`portrait_16_9\`**); add safe-margin guidance in **\`suffix\`** for Feed crops.
+## \`generationBlock.data.imageSize\` vs downstream preview
+When a still feeds an \`outputBlock\`, the server may **reconcile** \`imageSize\` from **output labels** (\`fluxPresetForOutput\`). Use clear labels (e.g. “**Vertical** storyboard frame”, “**Cinematic 16:9** establishing still”) so **9:16 vs 16:9 vs square** resolves sensibly.
 
 ## Chat reference images
-When the user **attached images** in the sidebar chat, the **server merges** them into the primary **\`mediaInput\`** after a successful write. **Never** paste huge data URLs into \`workflowJson\`; keep \`images\`: [] in JSON and rely on merge + preserved-media rules.
+Attachments are merged into **the first empty \`imagePrimitive\` slots** (one image per primitive) after a successful write. **Never** paste huge **\`dataUrl\`** blobs into JSON; **omit** \`image\` on primitives and rely on merge, **or** reuse ids so **prior blobs restore** when omitted.
 
 ## Media in snapshots
-Snapshots **strip** \`images\` data URLs. If you omit \`images\` for an existing mediaInput id, **prior uploads are preserved server-side**.
+Snapshots **strip** \`imagePrimitive.image\` payloads. Omitting \`image\` on an **existing** primitive **id** preserves the prior upload server-side.
 
 ## Tools (only these)
 - **read_workflow_canvas** — optional JSON refresh (same as snapshot).
@@ -233,6 +240,7 @@ function extractCampaignBriefFromDialog(dialog: WorkflowAgentDialogTurn[]): stri
   const raw = users.join("\n\n").trim();
   return raw
     .replace(/^Build a workflow for this campaign request:\s*\n+/im, "")
+    .replace(/^Build a photo \/ still-image workflow[^\n]*:\s*\n+/im, "")
     .trim()
     .slice(0, 6000);
 }
@@ -277,7 +285,7 @@ function buildPlannerMessages(
     if (i === imageAnchorIndex && t.role === "user") {
       const text =
         t.content.trim() ||
-        "(User attached reference image(s); treat as Brief / posts visual reference — server copies pixels into the primary mediaInput.)";
+        "(User attached reference image(s); treat as story/visual reference — server fills empty imagePrimitive slots after a successful write.)";
       return {
         role: "user" as const,
         content: [
@@ -291,7 +299,7 @@ function buildPlannerMessages(
 }
 
 export function workflowAgentLegacyUserContent(prompt: string): string {
-  return `Build a photo / still-image workflow (fal image generation + optional captions; no video):\n\n${prompt.trim().slice(0, 6000)}`;
+  return `Design a short-story workflow DAG (text/image primitives, generationBlock stills, optional videoBlock clips, sceneCompose/sceneJoin when needed, outputBlock preview):\n\n${prompt.trim().slice(0, 6000)}`;
 }
 
 export type WorkflowAgentGenerateResult = {
@@ -325,7 +333,7 @@ export type GenerateWorkflowOptions = {
   canvasSnapshot?: WorkflowDocument | null;
   /** Live reasoning / tool progress for NDJSON streaming clients. */
   streamSink?: (event: WorkflowAgentStreamEvent) => void;
-  /** Images pasted or picked in the sidebar composer — merged into primary mediaInput after a successful write. */
+  /** Images pasted or picked in the sidebar composer — merged into empty imagePrimitive nodes after a successful write. */
   composerAttachments?: MediaInputAsset[];
 };
 
@@ -360,7 +368,7 @@ export async function generateWorkflowWithOpenAI(
   const snapshotForPrompt = canvasSnapshot ? stripWorkflowMediaForAgent(canvasSnapshot) : null;
   const canvasBlock = snapshotForPrompt
     ? `\n\n## Canvas snapshot (media binary stripped; empty arrays here still restore prior uploads per node id on save)\n\`\`\`json\n${JSON.stringify(snapshotForPrompt, null, 2)}\n\`\`\``
-    : `\n\n## Canvas snapshot\n_(empty — design a **photo workflow**: one \`mediaInput\` hub; for a generic campaign/still-graph use **one** shared \`generationBlock\` (marketing: **both** \`text\`+\`image\` out) feeding **four** \`platformExport\` nodes \`youtube\`, \`facebook\`, \`instagram\`, \`tiktok\`; use **parallel** \`generationBlocks\` only for variants/carousel; schema version ${WORKFLOW_DOCUMENT_VERSION}; fresh uuids.)_`;
+    : `\n\n## Canvas snapshot\n_(empty — design a **short-story DAG**: start from \`textPrimitive\` seeds/beats → \`generationBlock\` stills (wire **text** context into gen); add \`videoBlock\` clips when motion is requested; use \`sceneCompose\` only when bundling **two** stills + **script**; use \`sceneJoin\` + ordered \`videoBlock\` ids + **cut** gaps for a stitched preview feeding **one** \`outputBlock\`; schema version ${WORKFLOW_DOCUMENT_VERSION}; fresh uuids.)_`;
 
   const agentLog: string[] = [];
   const pushLog = (line: string) => {
@@ -405,7 +413,7 @@ export async function generateWorkflowWithOpenAI(
 
     const writeWorkflowCanvasTool = tool({
       description:
-        "Apply the full WorkflowDocument JSON (photo/stills only). Rewrite the whole DAG when the user pivots platform or creative scope; reuse mediaInput ids when uploads still apply. Default **marketing** workflows: **one** shared generation block (**text**+**image** pins out) fanning out to **all four** platformExports unless channels are narrowed. Prefer parallel **text→image** forks only when the user wants variants/carousel; use **text→text** for copy iteration and **image→text** for captions.",
+        "Apply the full WorkflowDocument JSON (story canvas). Rewrite the DAG when the user changes narrative scope or modality; reuse primitive/gen/video ids when uploads or runs should carry over. Prefer **cut** transitions in sceneJoin unless the user asks for bridges (unsupported server-side). Never rely on video→video wires.",
       inputSchema: workflowJsonInputSchema,
       execute: async ({ workflowJson }) => {
         totalWriteAttempts += 1;
@@ -567,7 +575,7 @@ export async function generateWorkflowWithOpenAI(
   if (resolvedWorkflow) {
     const workflowOut =
       composerAttachments.length > 0
-        ? mergeComposerImagesIntoPrimaryMediaInput(resolvedWorkflow, composerAttachments)
+        ? mergeComposerImagesIntoPrimaryImagePrimitive(resolvedWorkflow, composerAttachments)
         : resolvedWorkflow;
     return {
       workflow: workflowOut,

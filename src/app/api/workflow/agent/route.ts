@@ -4,7 +4,7 @@ import { z } from "zod";
 import { buildTemplateWorkflowDocument } from "@/lib/workflow/template-from-brief";
 import { workflowDocumentSchema } from "@/lib/workflow/schema";
 import type { WorkflowDocument } from "@/lib/workflow/schema";
-import { mergeComposerImagesIntoPrimaryMediaInput } from "@/lib/workflow/workflow-canvas-agent";
+import { mergeComposerImagesIntoPrimaryImagePrimitive } from "@/lib/workflow/workflow-canvas-agent";
 import {
   generateWorkflowWithOpenAI,
   workflowAgentLegacyUserContent,
@@ -25,7 +25,7 @@ const bodySchema = z
   .object({
     prompt: z.string().min(1).max(6000).optional(),
     messages: z.array(messageSchema).min(1).max(30).optional(),
-    /** Images from the sidebar composer — merged into primary mediaInput after workflow apply. */
+    /** Images from the sidebar composer — merged into available image primitives after workflow apply. */
     composerImages: z.array(composerImageSchema).max(8).optional(),
     /** Current canvas so the agent can read/edit incrementally (full WorkflowDocument v3). */
     workflow: z.unknown().optional(),
@@ -165,7 +165,7 @@ export async function POST(req: Request) {
   }
 
   let workflow = buildTemplateWorkflowDocument(templateBrief);
-  workflow = mergeComposerImagesIntoPrimaryMediaInput(workflow, parsed.data.composerImages ?? []);
+  workflow = mergeComposerImagesIntoPrimaryImagePrimitive(workflow, parsed.data.composerImages ?? []);
   return NextResponse.json({
     workflow,
     source: "template" as const,

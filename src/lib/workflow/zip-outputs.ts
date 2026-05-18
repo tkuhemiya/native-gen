@@ -56,29 +56,19 @@ export async function zipRuntimeOutputs(
       } catch {
         /* skip */
       }
-    } else if (out.type === "mediaInput") {
-      if (out.text.trim()) {
+    } else if (out.type === "text") {
+      if (out.value.trim()) {
         addBlob(
-          `${prefix}-input-copy.txt`,
-          new Blob([out.text], { type: "text/plain;charset=utf-8" }),
+          `${prefix}-text.txt`,
+          new Blob([out.value], { type: "text/plain;charset=utf-8" }),
         );
       }
-      let i = 0;
-      for (const u of out.imageUrls) {
-        try {
-          const r = await fetch(u);
-          if (r.ok) {
-            addBlob(`${prefix}-input-image-${i}.bin`, await r.blob());
-          }
-        } catch {
-          /* skip */
-        }
-        i++;
-      }
-    } else if (out.type === "bundle") {
-      for (const f of out.files) {
-        const cleanPath = f.path.replace(/^\/+/, "");
-        addBlob(`${safe}/${cleanPath}`, f.blob);
+    } else if (out.type === "sceneContext") {
+      if (out.script.trim()) {
+        addBlob(
+          `${prefix}-scene-script.txt`,
+          new Blob([out.script], { type: "text/plain;charset=utf-8" }),
+        );
       }
     }
   }

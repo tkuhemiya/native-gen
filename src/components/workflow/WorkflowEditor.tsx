@@ -18,7 +18,6 @@ import {
 } from "@xyflow/react";
 import { saveAs } from "file-saver";
 import { useTheme } from "next-themes";
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -29,8 +28,13 @@ import {
   type WorkflowRunPhase,
 } from "@/components/workflow/WorkflowRunContext";
 import { GenerationBlockNode } from "@/components/workflow/nodes/GenerationBlockNode";
-import { MediaInputNode } from "@/components/workflow/nodes/MediaInputNode";
-import { PlatformExportNode } from "@/components/workflow/nodes/PlatformExportNode";
+import {
+  ImagePrimitiveNode,
+  OutputBlockNode,
+  SceneComposeNode,
+  SceneJoinNode,
+  TextPrimitiveNode,
+} from "@/components/workflow/nodes/StoryNodes";
 import { VideoBlockNode } from "@/components/workflow/nodes/VideoBlockNode";
 import type { AppNode } from "@/lib/workflow/app-node";
 import { layoutWorkflowNodesCompactDAG, topLeftForCenteredNode } from "@/lib/workflow/node-layout";
@@ -43,7 +47,12 @@ import {
   type WorkflowEdge,
   type WorkflowNode,
 } from "@/lib/workflow/schema";
-import { runWorkflowDAG, wrapError, type RuntimeOutputs } from "@/lib/workflow/runner";
+import {
+  runWorkflowDAG,
+  wrapError,
+  type AssembleBridgeFailureInfo,
+  type RuntimeOutputs,
+} from "@/lib/workflow/runner";
 import { logWorkflow } from "@/lib/workflow/workflow-debug-log";
 import { areWorkflowHandlesCompatible } from "@/lib/workflow/workflow-connection";
 import {
@@ -62,10 +71,13 @@ import { normalizeWorkflowDocument } from "@/lib/workflow/migrate";
 import { estimateWorkflowFalUsd } from "@/lib/workflow/estimate-workflow-fal-usd";
 
 const nodeTypes = {
-  mediaInput: MediaInputNode,
+  textPrimitive: TextPrimitiveNode,
+  imagePrimitive: ImagePrimitiveNode,
+  sceneCompose: SceneComposeNode,
+  sceneJoin: SceneJoinNode,
   generationBlock: GenerationBlockNode,
   videoBlock: VideoBlockNode,
-  platformExport: PlatformExportNode,
+  outputBlock: OutputBlockNode,
 } satisfies NodeTypes;
 
 function rfNodesToWorkflow(nodes: AppNode[]): WorkflowNode[] {
@@ -97,7 +109,7 @@ type FlowContextMenuState =
   | { kind: "node"; clientX: number; clientY: number; nodeId: string };
 
 export function WorkflowEditor() {
-  const [workflowName, setWorkflowName] = useState("Untitled posts pack");
+  const [workflowName, setWorkflowName] = useState("Untitled story");
   const [workflowId, setWorkflowId] = useState(() => crypto.randomUUID());
   const [nodes, setNodes, onNodesChange] = useNodesState<AppNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -116,6 +128,7 @@ export function WorkflowEditor() {
   const restoredMediaForWorkflowRef = useRef<string | null>(null);
   /** Mirrors completed node outputs during the current run (state updates can lag behind `catch`). */
   const partialRunOutputsRef = useRef<RuntimeOutputs>({});
+  const incrementalRunIdRef = useRef<string | null>(null);
   /** Outputs present when Run was clicked; restored if the new run errors before any node completes. */
   const outputsSnapshotBeforeRunRef = useRef<RuntimeOutputs | null>(null);
   const paneFlowAnchorRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -493,7 +506,7 @@ export function WorkflowEditor() {
   const createBlankWorkflow = () => {
     restoredMediaForWorkflowRef.current = null;
     const nextId = crypto.randomUUID();
-    setWorkflowName("Untitled posts pack");
+    setWorkflowName("Untitled story");
     setWorkflowId(nextId);
     setLastLoadedWorkflowId(nextId);
     setNodes([]);
@@ -570,16 +583,30 @@ export function WorkflowEditor() {
 
     setStatus("Running…");
     outputsSnapshotBeforeRunRef.current = lastOutputs ? { ...lastOutputs } : null;
+    incrementalRunIdRef.current = crypto.randomUUID();
     partialRunOutputsRef.current = {};
     setLastOutputs(null);
     setLiveOutputs({});
     setRunPhase("running");
     setActiveNodeId(null);
     try {
+      const reuseOutputs =
+        outputsSnapshotBeforeRunRef.current &&
+        Object.keys(outputsSnapshotBeforeRunRef.current).length > 0
+          ? outputsSnapshotBeforeRunRef.current
+          : undefined;
+
       const outputs = await runWorkflowDAG(
         workflowNodes,
         rfEdgesToWorkflow(edges),
         {
+          reuseOutputs,
+          onAssembleBridgeFailure: async (info: AssembleBridgeFailureInfo) => {
+            const ok = window.confirm(
+              `${info.message}\n\nUse a HARD CUT for gap ${info.gapIndex + 1}? Press Cancel to abort assembly.`,
+            );
+            return ok ? "cut" : "abort";
+          },
           onProgress: (p) => {
             setStatus(p.message ?? p.phase);
             // Highlight the node currently executing (before slow fal/export work finishes).
@@ -595,6 +622,13 @@ export function WorkflowEditor() {
               [e.nodeId]: e.output,
             }));
             setActiveNodeId(e.nodeId);
+            void persistWorkflowRunArtifacts(
+              workflowId,
+              workflowName,
+              workflowNodes,
+              partialRunOutputsRef.current,
+              incrementalRunIdRef.current ?? undefined,
+            );
           },
         },
       );
@@ -611,6 +645,7 @@ export function WorkflowEditor() {
         workflowName,
         workflowNodes,
         outputs,
+        incrementalRunIdRef.current ?? undefined,
       ).then(({ count }) => {
         if (count > 0) {
           setStatus(
@@ -650,7 +685,7 @@ export function WorkflowEditor() {
         <div className="flex flex-wrap items-end gap-3">
           <div className="flex min-w-0 flex-1 flex-col gap-1 sm:min-w-[12rem]">
             <label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Posts workflow
+              Story workflow
             </label>
             <input
               value={workflowName}
@@ -684,7 +719,7 @@ export function WorkflowEditor() {
                 </select>
                 <button
                   type="button"
-                  title="New posts pack"
+                  title="New story workflow"
                   className="shrink-0 rounded-md border border-border bg-card px-2 py-1 text-sm font-semibold leading-none text-card-foreground hover:bg-accent"
                   onClick={createBlankWorkflow}
                 >
@@ -742,12 +777,6 @@ export function WorkflowEditor() {
             >
               Run workflow
             </button>
-            <Link
-              href="/settings/connections"
-              className="rounded-md border border-border bg-card px-3 py-1 text-xs font-medium text-card-foreground hover:bg-accent"
-            >
-              Social accounts
-            </Link>
             <ThemeToggle />
             <div className="flex min-w-[4.5rem] shrink-0 flex-col items-end justify-end pb-0.5 text-right">
               {falRunCostEstimate?.ok ? (

@@ -134,9 +134,9 @@ export function GenerationBlockNode(props: NodeProps<AppNode>) {
             </span>
             <span
               className="text-[9px] text-muted-foreground"
-              title="Blue in: reference product still (optional). Green out: promo copy + hashtags when both green and blue outs are wired."
+              title="Green pins carry text; blue pins carry reference stills for edits."
             >
-              Image · poster + social text
+              Story still · optional caption path
             </span>
           </div>
           {!edgesOut.none && edgesOut.hasTextOut && !edgesOut.hasImageOut ? (
@@ -203,6 +203,23 @@ export function GenerationBlockNode(props: NodeProps<AppNode>) {
               </div>
             </div>
           </CollapsibleSection>
+          <label className="mt-2 flex items-center gap-2 text-[10px] text-muted-foreground">
+            <input
+              type="checkbox"
+              className="h-3 w-3"
+              checked={data.locked}
+              disabled={
+                !(runOut?.type === "generation" && (!!runOut.imageUrl?.trim() || !!runOut.text?.trim()))
+              }
+              title={
+                !(runOut?.type === "generation" && (!!runOut.imageUrl?.trim() || !!runOut.text?.trim()))
+                  ? "Run once to produce output before locking"
+                  : undefined
+              }
+              onChange={(e) => updateNodeData(id, { ...data, locked: e.target.checked })}
+            />
+            Lock — reuse prior generation on next Run when satisfied
+          </label>
         </div>
 
         <div className="flex shrink-0 flex-col justify-between gap-8 py-1">

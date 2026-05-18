@@ -25,8 +25,8 @@ export function explainWorkflowPlan(plan: WorkflowPlan): { summary: string; stag
   const lines: string[] = [];
   lines.push(`**${plan.name}** (plan v${plan.version}) · ${plan.stages.length} stages`);
   for (const s of plan.stages) {
-    if (s.kind === "mediaInput") {
-      lines.push(`- **${s.id}** · mediaInput — user brief / uploads entry point`);
+    if (s.kind === "textPrimitive") {
+      lines.push(`- **${s.id}** · textPrimitive — story seed / lore / copy (single text bucket + purpose tag)`);
     } else if (s.kind === "generation") {
       const ins = s.inputs
         ? Object.entries(s.inputs)
@@ -37,9 +37,8 @@ export function explainWorkflowPlan(plan: WorkflowPlan): { summary: string; stag
         `- **${s.id}** · generation — **${s.label}** · outputs \`[${s.outputs.join(", ")}]\` · ${ins} · suffix: _${s.suffix.slice(0, 120)}${s.suffix.length > 120 ? "…" : ""}_`,
       );
     } else {
-      const imgs = [s.imageFromStageId, ...(s.moreImageFromStageIds ?? [])].filter(Boolean);
       lines.push(
-        `- **${s.id}** · platformExport · **${s.platform}** · copy: \`${s.copyFromStageId ?? "(default media)"}\` · images: \`${imgs.length ? imgs.join(", ") : "—"}\``,
+        `- **${s.id}** · outputBlock · preview/download · media from: \`${s.mediaFromStageId}\` (${s.sourcePin ?? "image"} pin)`,
       );
     }
   }
@@ -65,7 +64,6 @@ function generationPlanToIntents(plan: GenerationPlan): string[] {
   if (plan.needTextToImage) {
     intents.push(plan.needReferenceImageEdit ? "openai-gpt-image-2-edit" : "text-to-image");
   }
-  if (plan.needMarketingSocialCopy) intents.push("marketing-social-copy");
   return intents;
 }
 
@@ -123,7 +121,6 @@ function relativeUnitsForGeneration(plan: GenerationPlan): number {
   if (plan.needCaption) u += 2;
   if (plan.needReferenceImageEdit) u += 6;
   if (plan.needTextToImage && !plan.needReferenceImageEdit) u += 5;
-  if (plan.needMarketingSocialCopy) u += 1;
   return u;
 }
 

@@ -147,6 +147,29 @@ export function topologicalOrderPreferLeft(
   return ordered;
 }
 
+/** Implicit deps so `sceneJoin` runs after referenced clip nodes without mandatory wiring. */
+export function withSceneJoinSyntheticEdges(
+  nodes: WorkflowNode[],
+  edges: WorkflowEdge[],
+): WorkflowEdge[] {
+  const synth: WorkflowEdge[] = [];
+  for (const n of nodes) {
+    if (n.data.kind !== "sceneJoin") continue;
+    let i = 0;
+    for (const cid of n.data.orderedClipNodeIds) {
+      synth.push({
+        id: `__join_dep:${n.id}:${cid}:${i}`,
+        source: cid,
+        target: n.id,
+        sourceHandle: null,
+        targetHandle: null,
+      });
+      i += 1;
+    }
+  }
+  return [...edges, ...synth];
+}
+
 export function assertConnectedDAG(nodes: WorkflowNode[], edges: WorkflowEdge[]) {
   if (nodes.length === 0) return;
   if (edges.length === 0 && nodes.length > 1) {

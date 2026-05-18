@@ -2,39 +2,36 @@ import {
   WORKFLOW_DOCUMENT_VERSION,
   defaultNodeData,
   workflowDocumentSchema,
+  type NodeData,
   type WorkflowDocument,
 } from "./schema";
 
-/** Deterministic graph from a brief (keywords choose export platform). Photo generation only. */
+/** Minimal starter DAG for short-story workflows (seed text → still → preview). */
 export function buildTemplateWorkflowDocument(brief: string): WorkflowDocument {
   const trimmed = brief.trim();
-  const lower = trimmed.toLowerCase();
-
-  const platform =
-    (["youtube", "facebook", "instagram", "tiktok"] as const).find((p) => lower.includes(p)) ??
-    "youtube";
 
   const baseGen = defaultNodeData("generationBlock");
   const genData = {
     ...baseGen,
-    label: "Generate image",
-    suffix: ", high quality ad creative, clean composition",
+    label: "Establishing still",
+    suffix:
+      ", cinematic establishing shot for a literary short story, cohesive mood and composition",
   };
 
   const textId = crypto.randomUUID();
   const fluxId = crypto.randomUUID();
   const exportId = crypto.randomUUID();
 
+  const seed = defaultNodeData("textPrimitive") as Extract<NodeData, { kind: "textPrimitive" }>;
   const nodes: WorkflowDocument["nodes"] = [
     {
       id: textId,
-      type: "mediaInput",
+      type: "textPrimitive",
       position: { x: 0, y: 0 },
       data: {
-        kind: "mediaInput",
-        label: "Brief / posts",
+        ...seed,
+        label: "Story seed",
         value: trimmed,
-        images: [],
       },
     },
     {
@@ -45,46 +42,36 @@ export function buildTemplateWorkflowDocument(brief: string): WorkflowDocument {
     },
     {
       id: exportId,
-      type: "platformExport",
+      type: "outputBlock",
       position: { x: 680, y: 0 },
       data: {
-        kind: "platformExport",
-        label: `${platform} export`,
-        platform,
+        kind: "outputBlock",
+        label: "Preview · export",
       },
     },
   ];
 
-  const mediaToGen = {
-    id: `e-${textId}-${fluxId}`,
-    source: textId,
-    target: fluxId,
-    sourceHandle: "text",
-    targetHandle: "text",
-  } as const;
-
-  const mediaToExport = {
-    id: `e-${textId}-${exportId}`,
-    source: textId,
-    target: exportId,
-    sourceHandle: "text",
-    targetHandle: "text",
-  } as const;
-
-  const genToExport = {
-    id: `e-${fluxId}-${exportId}`,
-    source: fluxId,
-    target: exportId,
-    sourceHandle: "image",
-    targetHandle: "image",
-  } as const;
-
-  const edges: WorkflowDocument["edges"] = [mediaToGen, mediaToExport, genToExport];
+  const edges: WorkflowDocument["edges"] = [
+    {
+      id: `e-${textId}-${fluxId}`,
+      source: textId,
+      target: fluxId,
+      sourceHandle: "text",
+      targetHandle: "text",
+    },
+    {
+      id: `e-${fluxId}-${exportId}`,
+      source: fluxId,
+      target: exportId,
+      sourceHandle: "image",
+      targetHandle: "media",
+    },
+  ];
 
   const doc = {
     id: crypto.randomUUID(),
     name:
-      trimmed.length > 48 ? `Draft · ${trimmed.slice(0, 45)}…` : `Draft · ${trimmed || "Campaign"}`,
+      trimmed.length > 48 ? `Draft · ${trimmed.slice(0, 45)}…` : `Draft · ${trimmed || "Story"}`,
     version: WORKFLOW_DOCUMENT_VERSION,
     nodes,
     edges,

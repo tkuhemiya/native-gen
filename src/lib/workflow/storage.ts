@@ -177,12 +177,13 @@ export async function persistWorkflowRunArtifacts(
   workflowName: string,
   nodes: WorkflowNode[],
   outputs: RuntimeOutputs,
+  fixedRunId?: string,
 ): Promise<{ runId: string; count: number }> {
   if (typeof window === "undefined") {
     return { runId: "", count: 0 };
   }
 
-  const runId = crypto.randomUUID();
+  const runId = fixedRunId ?? crypto.randomUUID();
   const createdAt = new Date().toISOString();
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const records: GeneratedMediaRecord[] = [];
@@ -192,10 +193,10 @@ export async function persistWorkflowRunArtifacts(
       .replace(/[^a-z0-9-_]/gi, "")
       .slice(0, 48) || "run";
 
-  const push = (r: Omit<GeneratedMediaRecord, "id"> & { id?: string }) => {
+  const push = (uniqueKey: string, r: Omit<GeneratedMediaRecord, "id">) => {
     records.push({
       ...r,
-      id: r.id ?? crypto.randomUUID(),
+      id: `${runId}:${uniqueKey}`,
     });
   };
 
@@ -212,7 +213,7 @@ export async function persistWorkflowRunArtifacts(
           const ext = res.headers.get("content-type")?.includes("png")
             ? "png"
             : "jpg";
-          push({
+          push(`${nodeId}:image`, {
             runId,
             workflowId,
             workflowName,
@@ -220,16 +221,30 @@ export async function persistWorkflowRunArtifacts(
             nodeId,
             nodeLabel,
             nodeKind,
-            fileName: `${slug}-${nodeId.slice(0, 8)}-generated.${ext}`,
+            fileName: `${slug}-${nodeId.slice(0, 8)}-still.${ext}`,
             blob,
           });
         }
       } catch {
         /* CORS / offline */
       }
+    } else if (out.type === "text") {
+      if (out.value.trim()) {
+        push(`${nodeId}:plain-text`, {
+          runId,
+          workflowId,
+          workflowName,
+          createdAt,
+          nodeId,
+          nodeLabel,
+          nodeKind,
+          fileName: `${slug}-${nodeId.slice(0, 8)}-plain-text.txt`,
+          blob: new Blob([out.value], { type: "text/plain;charset=utf-8" }),
+        });
+      }
     } else if (out.type === "generation") {
       if (out.text?.trim()) {
-        push({
+        push(`${nodeId}:gen-copy`, {
           runId,
           workflowId,
           workflowName,
@@ -248,7 +263,7 @@ export async function persistWorkflowRunArtifacts(
             const ext = res.headers.get("content-type")?.includes("png")
               ? "png"
               : "jpg";
-            push({
+            push(`${nodeId}:gen-image`, {
               runId,
               workflowId,
               workflowName,
@@ -269,7 +284,7 @@ export async function persistWorkflowRunArtifacts(
         const res = await fetch(out.url);
         if (res.ok) {
           const ext = res.headers.get("content-type")?.includes("webm") ? "webm" : "mp4";
-          push({
+          push(`${nodeId}:video`, {
             runId,
             workflowId,
             workflowName,
@@ -284,9 +299,9 @@ export async function persistWorkflowRunArtifacts(
       } catch {
         /* CORS / offline */
       }
-    } else if (out.type === "mediaInput") {
-      if (out.text.trim()) {
-        push({
+    } else if (out.type === "sceneContext") {
+      if (out.script.trim()) {
+        push(`${nodeId}:scene-script`, {
           runId,
           workflowId,
           workflowName,
@@ -294,46 +309,8 @@ export async function persistWorkflowRunArtifacts(
           nodeId,
           nodeLabel,
           nodeKind,
-          fileName: `${slug}-${nodeId.slice(0, 8)}-copy.txt`,
-          blob: new Blob([out.text], { type: "text/plain;charset=utf-8" }),
-        });
-      }
-      let i = 0;
-      for (const url of out.imageUrls) {
-        try {
-          const res = await fetch(url);
-          if (res.ok) {
-            push({
-              runId,
-              workflowId,
-              workflowName,
-              createdAt,
-              nodeId,
-              nodeLabel,
-              nodeKind,
-              fileName: `${slug}-${nodeId.slice(0, 8)}-input-img-${i}.png`,
-              blob: await res.blob(),
-            });
-          }
-        } catch {
-          /* skip */
-        }
-        i++;
-      }
-    } else if (out.type === "bundle") {
-      for (const f of out.files) {
-        const safeName = f.path.replace(/^\/+/, "").replace(/\//g, "_");
-        push({
-          runId,
-          workflowId,
-          workflowName,
-          createdAt,
-          nodeId,
-          nodeLabel,
-          nodeKind,
-          fileName: `${slug}-${safeName}`,
-          storagePath: f.path.replace(/^\/+/, ""),
-          blob: f.blob,
+          fileName: `${slug}-${nodeId.slice(0, 8)}-scene-script.txt`,
+          blob: new Blob([out.script], { type: "text/plain;charset=utf-8" }),
         });
       }
     }
@@ -365,7 +342,7 @@ export async function persistWorkflowRunArtifacts(
   const db = await getDb();
   const tx = db.transaction("generatedMedia", "readwrite");
   for (const r of records) {
-    await tx.store.add(r);
+    await tx.store.put(r);
   }
   await tx.done;
 
@@ -399,7 +376,7 @@ function mirrorTextOutputsToLocalStorage(
   for (const [id, o] of Object.entries(outputs)) {
     if (o.type === "text" && o.value.trim()) texts[id] = o.value;
     else if (o.type === "generation" && o.text?.trim()) texts[id] = o.text;
-    else if (o.type === "mediaInput" && o.text.trim()) texts[id] = o.text;
+    else if (o.type === "sceneContext" && o.script.trim()) texts[id] = o.script;
   }
   if (Object.keys(texts).length === 0) return;
   try {
@@ -453,21 +430,32 @@ export async function rehydrateRuntimeOutputsFromArtifacts(
     const node = nodeById.get(nodeId);
     if (!node) continue;
 
-    const kind = (recs[0]?.nodeKind ?? node.data.kind) as string;
+    const kind = node.data.kind;
 
-    if (kind === "mediaInput") {
-      let text = "";
-      const imageUrls: string[] = [];
+    if (kind === "textPrimitive") {
+      let value = "";
       const sorted = [...recs].sort((a, b) => a.fileName.localeCompare(b.fileName));
       for (const r of sorted) {
-        if (r.fileName.endsWith("-generated-copy.txt")) continue;
-        if (r.fileName.endsWith("-copy.txt")) {
-          text = await r.blob.text();
-        } else if (r.fileName.includes("-input-img-")) {
-          imageUrls.push(URL.createObjectURL(r.blob));
+        if (r.fileName.includes("-plain-text.txt")) {
+          value = await r.blob.text();
         }
       }
-      out[nodeId] = { type: "mediaInput", text, imageUrls };
+      if (value.trim()) {
+        out[nodeId] = { type: "text", value };
+      }
+      continue;
+    }
+
+    if (kind === "imagePrimitive") {
+      let url: string | undefined;
+      for (const r of recs) {
+        if (r.fileName.includes("-still.")) {
+          url = URL.createObjectURL(r.blob);
+        }
+      }
+      if (url) {
+        out[nodeId] = { type: "image", url };
+      }
       continue;
     }
 
@@ -485,7 +473,25 @@ export async function rehydrateRuntimeOutputsFromArtifacts(
       continue;
     }
 
-    if (kind === "videoBlock") {
+    if (kind === "sceneCompose") {
+      let script = "";
+      for (const r of recs) {
+        if (r.fileName.includes("-scene-script.txt")) {
+          script = await r.blob.text();
+        }
+      }
+      if (script.trim()) {
+        out[nodeId] = {
+          type: "sceneContext",
+          script: script.trim(),
+          imageAUrl: "",
+          imageBUrl: "",
+        };
+      }
+      continue;
+    }
+
+    if (kind === "videoBlock" || kind === "sceneJoin") {
       let url: string | undefined;
       for (const r of recs) {
         if (r.fileName.includes("-generated-video.")) {
@@ -498,17 +504,23 @@ export async function rehydrateRuntimeOutputsFromArtifacts(
       continue;
     }
 
-    if (kind === "platformExport") {
-      const files: { path: string; blob: Blob }[] = [];
+    if (kind === "outputBlock") {
+      let videoUrl: string | undefined;
+      let imgUrl: string | undefined;
       for (const r of recs) {
-        files.push({
-          path: r.storagePath && r.storagePath.length > 0 ? r.storagePath : r.fileName,
-          blob: r.blob,
-        });
+        if (r.fileName.includes("-generated-video.")) {
+          videoUrl = URL.createObjectURL(r.blob);
+        }
+        if (r.fileName.includes("-still.")) {
+          imgUrl = URL.createObjectURL(r.blob);
+        }
       }
-      if (files.length > 0) {
-        out[nodeId] = { type: "bundle", files };
+      if (videoUrl) {
+        out[nodeId] = { type: "video", url: videoUrl };
+      } else if (imgUrl) {
+        out[nodeId] = { type: "image", url: imgUrl };
       }
+      continue;
     }
   }
 

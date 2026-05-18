@@ -172,6 +172,21 @@ export function VideoBlockNode(props: NodeProps<AppNode>) {
               </select>
             </label>
           </div>
+          <label className="mt-2 flex items-center gap-2 text-[10px] text-muted-foreground">
+            <input
+              type="checkbox"
+              className="h-3 w-3"
+              checked={data.locked}
+              disabled={!(runOut?.type === "video" && !!runOut.url?.trim())}
+              title={
+                !(runOut?.type === "video" && !!runOut.url?.trim())
+                  ? "Render once before locking"
+                  : undefined
+              }
+              onChange={(e) => updateNodeData(id, { ...data, locked: e.target.checked })}
+            />
+            Lock — reuse rendered clip on next Run when satisfied
+          </label>
         </div>
 
         <div className="flex shrink-0 flex-col justify-center gap-8 py-1">
@@ -179,7 +194,7 @@ export function VideoBlockNode(props: NodeProps<AppNode>) {
             type="source"
             position={Position.Right}
             id="video"
-            title="Video out — wire into a platform export's blue pin"
+            title="Video out — wire into Join scenes or Output preview"
             className="!right-[-6px] !h-3 !w-3 !border-2 !border-card !bg-violet-500"
           />
         </div>

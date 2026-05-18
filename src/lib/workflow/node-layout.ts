@@ -4,10 +4,13 @@ import type { CanvasNodeType, WorkflowEdge, WorkflowNode } from "@/lib/workflow/
  * Approximate node size for centering new blocks on the cursor (flow coords use top-left).
  */
 export const NODE_ANCHOR: Record<CanvasNodeType, { w: number; h: number }> = {
-  mediaInput: { w: 280, h: 312 },
+  textPrimitive: { w: 280, h: 260 },
+  imagePrimitive: { w: 280, h: 280 },
+  sceneCompose: { w: 300, h: 220 },
+  sceneJoin: { w: 320, h: 320 },
   generationBlock: { w: 340, h: 340 },
   videoBlock: { w: 320, h: 360 },
-  platformExport: { w: 300, h: 380 },
+  outputBlock: { w: 320, h: 380 },
 };
 
 /** Horizontal gap between DAG depth columns (after the widest node in each column). */
@@ -18,10 +21,13 @@ const LAYOUT_ROW_GAP = 72;
 function anchorForNode(node: WorkflowNode): { w: number; h: number } {
   const t = node.type;
   if (
-    t === "mediaInput" ||
+    t === "textPrimitive" ||
+    t === "imagePrimitive" ||
+    t === "sceneCompose" ||
+    t === "sceneJoin" ||
     t === "generationBlock" ||
     t === "videoBlock" ||
-    t === "platformExport"
+    t === "outputBlock"
   ) {
     return NODE_ANCHOR[t];
   }

@@ -40,12 +40,10 @@ export type GenerationPlan = {
   /** fal text→image when this block outputs an image. */
   needTextToImage: boolean;
   /**
-   * Reference image on the blue pin while outputting image → `openai/gpt-image-2/edit` (photo-accurate),
+   * Reference image on the blue pin while outputting image → edit / conditioning path,
    * not text-only conditioning.
    */
   needReferenceImageEdit: boolean;
-  /** When both text+image pins are used, fill the text pin with promo copy + hashtags after image gen. */
-  needMarketingSocialCopy: boolean;
 };
 
 /**
@@ -68,13 +66,10 @@ export function planGeneration(inL: MediaLanes, outL: MediaLanes): GenerationPla
 
   const needReferenceImageEdit = Boolean(needTextToImage && inL.image);
 
-  const needMarketingSocialCopy = Boolean(outL.text && outL.image);
-
   return {
     needPassthroughText,
     needCaption,
     needTextToImage,
     needReferenceImageEdit,
-    needMarketingSocialCopy,
   };
 }

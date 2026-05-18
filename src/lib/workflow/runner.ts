@@ -2,6 +2,7 @@ import {
   assertConnectedDAG,
   GraphError,
   topologicalOrderPreferLeft,
+  withSceneJoinSyntheticEdges,
 } from "./graph";
 import {
   type GenerationPlan,
@@ -28,18 +29,10 @@ export type RuntimeOutputs = Record<
       sourceImageUrl?: string;
     }
   | {
-      type: "mediaInput";
-      text: string;
-      imageUrls: string[];
-    }
-  | {
-      type: "bundle";
-      files: { path: string; blob: Blob }[];
-      publish?: {
-        platform: "facebook" | "instagram";
-        imageUrls: string[];
-        caption: string;
-      };
+      type: "sceneContext";
+      script: string;
+      imageAUrl: string;
+      imageBUrl: string;
     }
 >;
 
@@ -55,8 +48,25 @@ export type NodeRunComplete = {
   total: number;
   label: string;
   output: RuntimeOutputs[string];
-  /** True when output was copied from {@link runWorkflowDAG} `reuseOutputs`. */
   reused?: boolean;
+};
+
+export type AssembleBridgeFailureInfo = {
+  gapIndex: number;
+  message: string;
+};
+
+export type RunWorkflowOptions = {
+  onProgress?: (p: RunProgress) => void;
+  onNodeComplete?: (e: NodeRunComplete) => void;
+  reuseOutputs?: RuntimeOutputs;
+  /**
+   * When server assembly hits an unsupported bridge gap, choose retry/cut/abort.
+   * If omitted, bridge gaps throw {@link GraphError}.
+   */
+  onAssembleBridgeFailure?: (
+    info: AssembleBridgeFailureInfo,
+  ) => Promise<"retry" | "cut" | "abort">;
 };
 
 function runLabel(node: WorkflowNode): string {
@@ -68,17 +78,32 @@ function isTextTargetEdge(edge: WorkflowEdge, nodeId: string) {
 }
 
 function isImageTargetEdge(edge: WorkflowEdge, nodeId: string) {
-  return edge.target === nodeId && (edge.targetHandle == null || edge.targetHandle === "image");
+  return (
+    edge.target === nodeId &&
+    (edge.targetHandle === "image" ||
+      edge.targetHandle === "imageA" ||
+      edge.targetHandle === "imageB" ||
+      edge.targetHandle === "media")
+  );
 }
 
-function mediaInputTextFromEdge(edge: WorkflowEdge): boolean {
-  const sh = edge.sourceHandle;
-  return sh == null || sh === "text";
+function isScriptTargetEdge(edge: WorkflowEdge, nodeId: string) {
+  return edge.target === nodeId && edge.targetHandle === "script";
 }
 
-function mediaInputImagesFromEdge(edge: WorkflowEdge): boolean {
-  const sh = edge.sourceHandle;
-  return sh == null || sh === "image";
+function isImageATargetEdge(edge: WorkflowEdge, nodeId: string) {
+  return edge.target === nodeId && edge.targetHandle === "imageA";
+}
+
+function isImageBTargetEdge(edge: WorkflowEdge, nodeId: string) {
+  return edge.target === nodeId && edge.targetHandle === "imageB";
+}
+
+/** Incoming text contributors sorted by upstream node id for deterministic merges. */
+function sortedIncomingEdges(nodeId: string, incomingByTarget: Map<string, WorkflowEdge[]>) {
+  const incoming = [...(incomingByTarget.get(nodeId) ?? [])];
+  incoming.sort((a, b) => a.source.localeCompare(b.source));
+  return incoming;
 }
 
 function collectUpstreamText(
@@ -86,9 +111,8 @@ function collectUpstreamText(
   incomingByTarget: Map<string, WorkflowEdge[]>,
   outputs: RuntimeOutputs,
 ): string {
-  const incoming = incomingByTarget.get(nodeId) ?? [];
   const parts: string[] = [];
-  for (const edge of incoming) {
+  for (const edge of sortedIncomingEdges(nodeId, incomingByTarget)) {
     if (!isTextTargetEdge(edge, nodeId)) continue;
     const upstream = outputs[edge.source];
     if (!upstream) continue;
@@ -102,15 +126,66 @@ function collectUpstreamText(
       if (edge.sourceHandle === "image") continue;
       parts.push(upstream.value);
     }
-    if (
-      upstream.type === "mediaInput" &&
-      upstream.text.trim() &&
-      mediaInputTextFromEdge(edge)
-    ) {
-      parts.push(upstream.text);
+  }
+  return parts.join("\n\n").trim();
+}
+
+function collectScriptForScene(
+  nodeId: string,
+  incomingByTarget: Map<string, WorkflowEdge[]>,
+  outputs: RuntimeOutputs,
+): string {
+  const parts: string[] = [];
+  for (const edge of sortedIncomingEdges(nodeId, incomingByTarget)) {
+    if (!isScriptTargetEdge(edge, nodeId)) continue;
+    const upstream = outputs[edge.source];
+    if (!upstream) continue;
+    if (upstream.type === "text") {
+      if (upstream.value.trim()) parts.push(upstream.value.trim());
+    }
+    if (upstream.type === "generation" && edge.sourceHandle === "text") {
+      const t = upstream.text?.trim();
+      if (t) parts.push(t);
     }
   }
-  return parts.join("\n").trim();
+  return parts.join("\n\n").trim();
+}
+
+function pullImageUrlFromOutput(
+  edge: WorkflowEdge,
+  upstream: RuntimeOutputs[string] | undefined,
+): string | undefined {
+  if (!upstream) return undefined;
+  if (upstream.type === "image" && upstream.url) {
+    if (edge.sourceHandle === "text") return undefined;
+    return upstream.url;
+  }
+  if (upstream.type === "generation") {
+    const u = upstream.imageUrl;
+    if (u && edge.sourceHandle === "image") return u;
+    return undefined;
+  }
+  if (upstream.type === "sceneContext") {
+    const sh = edge.sourceHandle;
+    if (sh === "imageA") return upstream.imageAUrl;
+    if (sh === "imageB") return upstream.imageBUrl;
+  }
+  return undefined;
+}
+
+function collectOneImageForScenePin(
+  nodeId: string,
+  pinTest: (e: WorkflowEdge, id: string) => boolean,
+  incomingByTarget: Map<string, WorkflowEdge[]>,
+  outputs: RuntimeOutputs,
+): string | undefined {
+  for (const edge of sortedIncomingEdges(nodeId, incomingByTarget)) {
+    if (!pinTest(edge, nodeId)) continue;
+    const upstream = outputs[edge.source];
+    const u = pullImageUrlFromOutput(edge, upstream);
+    if (u) return u;
+  }
+  return undefined;
 }
 
 function collectUpstreamImageUrls(
@@ -118,53 +193,27 @@ function collectUpstreamImageUrls(
   incomingByTarget: Map<string, WorkflowEdge[]>,
   outputs: RuntimeOutputs,
 ): string[] {
-  const incoming = incomingByTarget.get(nodeId) ?? [];
   const urls: string[] = [];
   const seen = new Set<string>();
-  for (const edge of incoming) {
+  for (const edge of sortedIncomingEdges(nodeId, incomingByTarget)) {
     if (!isImageTargetEdge(edge, nodeId)) continue;
     const upstream = outputs[edge.source];
     if (!upstream) continue;
-    if (upstream.type === "generation") {
-      const u = upstream.imageUrl;
-      if (u && edge.sourceHandle === "image") {
-        if (!seen.has(u)) {
-          urls.push(u);
-          seen.add(u);
-        }
-      }
-      continue;
-    }
-    if (upstream.type === "image" && upstream.url) {
-      if (edge.sourceHandle === "text") continue;
-      if (!seen.has(upstream.url)) {
-        urls.push(upstream.url);
-        seen.add(upstream.url);
-      }
-    }
-    if (upstream.type === "mediaInput" && mediaInputImagesFromEdge(edge)) {
-      for (const u of upstream.imageUrls) {
-        if (u && !seen.has(u)) {
-          urls.push(u);
-          seen.add(u);
-        }
-      }
+    const u = pullImageUrlFromOutput(edge, upstream);
+    if (u && !seen.has(u)) {
+      urls.push(u);
+      seen.add(u);
     }
   }
   return urls;
 }
 
-/**
- * Pull MP4 URLs from upstream `videoBlock` outputs that wire into this node's blue (image/media)
- * pin. Used by `platformExport` so a wired video flows into the export bundle as the primary
- * deliverable.
- */
 function collectUpstreamVideoUrls(
   nodeId: string,
   incomingByTarget: Map<string, WorkflowEdge[]>,
   outputs: RuntimeOutputs,
 ): string[] {
-  const incoming = incomingByTarget.get(nodeId) ?? [];
+  const incoming = sortedIncomingEdges(nodeId, incomingByTarget);
   const urls: string[] = [];
   const seen = new Set<string>();
   for (const edge of incoming) {
@@ -180,7 +229,6 @@ function collectUpstreamVideoUrls(
   return urls;
 }
 
-/** Parse JSON bodies from `/api/fal/generation` (and raw fal-shaped errors). */
 function extractFalProxyErrorMessage(
   body: Record<string, unknown>,
   httpStatus: number,
@@ -191,31 +239,6 @@ function extractFalProxyErrorMessage(
 
   const detail = body.detail;
   if (typeof detail === "string" && detail.trim()) return detail.trim();
-  if (Array.isArray(detail)) {
-    const parts = detail.map((item: unknown) => {
-      if (!item || typeof item !== "object") return "";
-      const row = item as { msg?: unknown; loc?: unknown };
-      const loc = Array.isArray(row.loc)
-        ? row.loc.map(String).join(".")
-        : String(row.loc ?? "");
-      const m =
-        typeof row.msg === "string"
-          ? row.msg
-          : row.msg != null
-            ? JSON.stringify(row.msg)
-            : "";
-      return [loc, m].filter(Boolean).join(": ");
-    });
-    const joined = parts.filter(Boolean).join("; ").trim();
-    if (joined) return joined.slice(0, 6000);
-  }
-  if (detail && typeof detail === "object" && !Array.isArray(detail)) {
-    const o = detail as Record<string, unknown>;
-    if (typeof o.message === "string" && o.message.trim()) {
-      return o.message.trim();
-    }
-    if (typeof o.msg === "string" && o.msg.trim()) return o.msg.trim();
-  }
 
   const msg = body.message;
   if (typeof msg === "string" && msg.trim()) return msg.trim();
@@ -223,12 +246,6 @@ function extractFalProxyErrorMessage(
   const trimmed = rawText.trim();
   if (trimmed.length > 0 && trimmed.length <= 16_000) {
     return trimmed.slice(0, 6000);
-  }
-  if (trimmed.length > 16_000) {
-    return [
-      `Generation failed (${httpStatus}); response body very large (${trimmed.length} chars)`,
-      trimmed.slice(0, 280),
-    ].join(" — preview: ");
   }
 
   return `Generation failed (${httpStatus})`;
@@ -240,27 +257,108 @@ function generationCacheSatisfiesPlan(
 ): boolean {
   if (plan.needPassthroughText && !cached.text?.trim()) return false;
   if (plan.needCaption && !cached.text?.trim()) return false;
-  if (plan.needMarketingSocialCopy && !cached.text?.trim()) return false;
   if (plan.needTextToImage && !cached.imageUrl) return false;
   return true;
+}
+
+function normalizeJoinTransitions(
+  clipCount: number,
+  transitions: { mode: "cut" | "bridge"; bridgePrompt?: string }[],
+): { mode: "cut" | "bridge"; bridgePrompt?: string }[] {
+  const n = Math.max(0, clipCount - 1);
+  const out: { mode: "cut" | "bridge"; bridgePrompt?: string }[] = [];
+  for (let i = 0; i < n; i += 1) {
+    out.push(transitions[i] ?? { mode: "cut" });
+  }
+  return out;
+}
+
+async function assembleClipsWithBridgeHandling(
+  clips: string[],
+  transitions: { mode: "cut" | "bridge"; bridgePrompt?: string }[],
+  onAssembleBridgeFailure: RunWorkflowOptions["onAssembleBridgeFailure"],
+): Promise<string> {
+  let current = normalizeJoinTransitions(clips.length, transitions);
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const res = await fetch("/api/workflow/assemble", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clips, transitions: current }),
+    });
+    const buf = await res.arrayBuffer();
+    const ct = res.headers.get("content-type") ?? "";
+
+    if (res.ok) {
+      const mime = ct.includes("webm") ? "video/webm" : "video/mp4";
+      const b = new Blob([buf], { type: mime });
+      return URL.createObjectURL(b);
+    }
+
+    const rawText = new TextDecoder().decode(buf);
+    let parsedBody: Record<string, unknown> = {};
+    try {
+      const p = JSON.parse(rawText) as unknown;
+      if (p && typeof p === "object" && !Array.isArray(p)) {
+        parsedBody = p as Record<string, unknown>;
+      }
+    } catch {
+      /* non-json */
+    }
+
+    const code =
+      typeof parsedBody.code === "string" ? parsedBody.code : "";
+    const gapIndexRaw = parsedBody.gapIndex;
+    const gapIndex =
+      typeof gapIndexRaw === "number" && Number.isFinite(gapIndexRaw)
+        ? gapIndexRaw
+        : -1;
+
+    if (
+      res.status === 422 &&
+      code === "bridge_gap_unsupported" &&
+      onAssembleBridgeFailure &&
+      gapIndex >= 0
+    ) {
+      const choice = await onAssembleBridgeFailure({
+        gapIndex,
+        message:
+          typeof parsedBody.error === "string"
+            ? parsedBody.error
+            : "Bridge transition is not supported yet on the server.",
+      });
+      if (choice === "abort") {
+        throw new GraphError("Scene assembly aborted");
+      }
+      if (choice === "cut") {
+        const next = [...current];
+        if (gapIndex < next.length) {
+          next[gapIndex] = { mode: "cut" };
+        }
+        current = next;
+        continue;
+      }
+      throw new GraphError(
+        "Bridge transition is not available on the server yet — pick **Cut** to continue, or edit the Join block.",
+      );
+    }
+
+    throw new GraphError(extractFalProxyErrorMessage(parsedBody, res.status, rawText));
+  }
 }
 
 export async function runWorkflowDAG(
   nodes: WorkflowNode[],
   edges: WorkflowEdge[],
-  options: {
-    onProgress?: (p: RunProgress) => void;
-    /** Fires after each node’s output is ready (same order as execution). */
-    onNodeComplete?: (e: NodeRunComplete) => void;
-    /** Outputs from an earlier run; generation blocks reuse when still valid for current wiring. */
-    reuseOutputs?: RuntimeOutputs;
-  } = {},
+  options: RunWorkflowOptions = {},
 ): Promise<RuntimeOutputs> {
   if (nodes.length === 0) {
     throw new GraphError("Add at least one node before running");
   }
 
-  const { onProgress, onNodeComplete, reuseOutputs: reuseOutputsRaw } = options;
+  const { onProgress, onNodeComplete, reuseOutputs: reuseOutputsRaw, onAssembleBridgeFailure } =
+    options;
   const reuseOutputs =
     reuseOutputsRaw && Object.keys(reuseOutputsRaw).length > 0
       ? reuseOutputsRaw
@@ -272,8 +370,9 @@ export async function runWorkflowDAG(
     reuseCandidates: reuseOutputs ? Object.keys(reuseOutputs).length : 0,
   });
 
-  assertConnectedDAG(nodes, edges);
-  const order = topologicalOrderPreferLeft(nodes, edges);
+  const graphEdges = withSceneJoinSyntheticEdges(nodes, edges);
+  assertConnectedDAG(nodes, graphEdges);
+  const order = topologicalOrderPreferLeft(nodes, graphEdges);
   const totalSteps = order.length;
   const nodesById = new Map(nodes.map((n) => [n.id, n]));
   const incomingByTarget = new Map<string, WorkflowEdge[]>();
@@ -307,11 +406,116 @@ export async function runWorkflowDAG(
     });
 
     switch (data.kind) {
-      case "mediaInput":
+      case "textPrimitive": {
+        if (
+          data.locked &&
+          reuseOutputs &&
+          reuseOutputs[id]?.type === "text" &&
+          reuseOutputs[id].value.trim()
+        ) {
+          const cached = reuseOutputs[id];
+          outputs[id] = cached;
+          onNodeComplete?.({
+            nodeId: id,
+            index: step + 1,
+            total: totalSteps,
+            label,
+            output: cached,
+            reused: true,
+          });
+          break;
+        }
+        const upstream = collectUpstreamText(id, incomingByTarget, outputs);
+        const chunks = [upstream, data.prompt.trim(), data.value.trim()].filter(Boolean);
+        const value = chunks.join("\n\n").trim() || data.value.trim();
+        outputs[id] = { type: "text", value };
+        onNodeComplete?.({
+          nodeId: id,
+          index: step + 1,
+          total: totalSteps,
+          label,
+          output: outputs[id],
+        });
+        break;
+      }
+      case "imagePrimitive": {
+        const localUrl = data.image?.dataUrl;
+        if (data.locked && reuseOutputs && reuseOutputs[id]?.type === "image") {
+          const cached = reuseOutputs[id];
+          if (cached.url?.trim()) {
+            outputs[id] = cached;
+            onNodeComplete?.({
+              nodeId: id,
+              index: step + 1,
+              total: totalSteps,
+              label,
+              output: cached,
+              reused: true,
+            });
+            break;
+          }
+        }
+        const upstreamUrls = collectUpstreamImageUrls(id, incomingByTarget, outputs);
+        const url = (localUrl && localUrl.trim()) || upstreamUrls[0];
+        if (!url?.trim()) {
+          throw new GraphError(
+            `Image primitive “${label}” needs an uploaded still or an upstream generated image wired to its image pin`,
+          );
+        }
+        outputs[id] = { type: "image", url: url.trim() };
+        onNodeComplete?.({
+          nodeId: id,
+          index: step + 1,
+          total: totalSteps,
+          label,
+          output: outputs[id],
+        });
+        break;
+      }
+      case "sceneCompose": {
+        if (
+          data.locked &&
+          reuseOutputs &&
+          reuseOutputs[id]?.type === "sceneContext"
+        ) {
+          const cached = reuseOutputs[id];
+          outputs[id] = cached;
+          onNodeComplete?.({
+            nodeId: id,
+            index: step + 1,
+            total: totalSteps,
+            label,
+            output: cached,
+            reused: true,
+          });
+          break;
+        }
+        const script = collectScriptForScene(id, incomingByTarget, outputs);
+        const imgA = collectOneImageForScenePin(
+          id,
+          isImageATargetEdge,
+          incomingByTarget,
+          outputs,
+        );
+        const imgB = collectOneImageForScenePin(
+          id,
+          isImageBTargetEdge,
+          incomingByTarget,
+          outputs,
+        );
+        if (!script.trim()) {
+          throw new GraphError(`Scene “${label}” needs script text wired to the script pin`);
+        }
+        if (!imgA || !imgB) {
+          throw new GraphError(
+            `Scene “${label}” needs two stills wired to image A and image B pins`,
+          );
+        }
         outputs[id] = {
-          type: "mediaInput",
-          text: data.value,
-          imageUrls: data.images.map((a) => a.dataUrl),
+          type: "sceneContext",
+          script: script.trim(),
+          imageAUrl: imgA,
+          imageBUrl: imgB,
         };
         onNodeComplete?.({
           nodeId: id,
@@ -321,19 +525,88 @@ export async function runWorkflowDAG(
           output: outputs[id],
         });
         break;
+      }
+      case "sceneJoin": {
+        const ordered = data.orderedClipNodeIds;
+        if (ordered.length === 0) {
+          throw new GraphError(`Join “${label}” needs at least one clip id in its ordered list`);
+        }
+        const clips: string[] = [];
+        for (const clipId of ordered) {
+          const o = outputs[clipId];
+          if (!o || o.type !== "video") {
+            throw new GraphError(
+              `Join “${label}” references clip node ${clipId.slice(0, 8)}… but it has no video output yet`,
+            );
+          }
+          clips.push(o.url);
+        }
+        const trans = normalizeJoinTransitions(ordered.length, data.transitions);
+        const assembledUrl = await assembleClipsWithBridgeHandling(
+          clips,
+          trans,
+          onAssembleBridgeFailure,
+        );
+        outputs[id] = { type: "video", url: assembledUrl };
+        onNodeComplete?.({
+          nodeId: id,
+          index: step + 1,
+          total: totalSteps,
+          label,
+          output: outputs[id],
+        });
+        break;
+      }
+      case "outputBlock": {
+        const vid = collectUpstreamVideoUrls(id, incomingByTarget, outputs)[0];
+        if (vid) {
+          const upstream = [...sortedIncomingEdges(id, incomingByTarget)]
+            .map((e) => outputs[e.source])
+            .find((o) => o?.type === "video");
+          outputs[id] = {
+            type: "video",
+            url: vid,
+            sourceImageUrl: upstream?.type === "video" ? upstream.sourceImageUrl : undefined,
+          };
+          onNodeComplete?.({
+            nodeId: id,
+            index: step + 1,
+            total: totalSteps,
+            label,
+            output: outputs[id],
+          });
+          break;
+        }
+        const imgs = collectUpstreamImageUrls(id, incomingByTarget, outputs);
+        const img = imgs[0];
+        if (!img) {
+          throw new GraphError(
+            `Output “${label}” needs one upstream image or video wired to its media pin`,
+          );
+        }
+        outputs[id] = { type: "image", url: img };
+        onNodeComplete?.({
+          nodeId: id,
+          index: step + 1,
+          total: totalSteps,
+          label,
+          output: outputs[id],
+        });
+        break;
+      }
       case "generationBlock": {
         const inL = incomingMediaLanes(id, incomingByTarget);
         const outL = outgoingMediaLanes(id, edges);
         const plan = planGeneration(inL, outL);
 
-        if (reuseOutputs) {
+        if (data.locked && reuseOutputs) {
           const cached = reuseOutputs[id];
           if (
             cached?.type === "generation" &&
             generationCacheSatisfiesPlan(plan, cached)
           ) {
             outputs[id] = cached;
-            logWorkflow("info", "runner/node", "Skipped generation (reused prior output)", {
+            logWorkflow("info", "runner/node", "Skipped generation (locked + prior output)", {
               nodeId: id,
               label,
             });
@@ -353,52 +626,18 @@ export async function runWorkflowDAG(
         const promptBody =
           promptNotes +
           (data.suffix.trim()
-            ? `${promptNotes ? "\n" : ""}${data.suffix.trim()}`
+            ? `${promptNotes ? "\n\n" : ""}${data.suffix.trim()}`
             : "");
         const diffusionPrompt =
           promptBody.trim() ||
           data.suffix.trim() ||
-          "Sharp detail, advertising polish, brand-safe composition";
-
-        async function postSocialMarketingCopy(body: {
-          campaignBrief: string;
-          productDescription?: string;
-          sceneBrief?: string;
-        }) {
-          const res = await fetch("/api/workflow/social-copy", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-          });
-          const rawText = await res.text();
-          let parsedBody: Record<string, unknown> = {};
-          try {
-            const p = JSON.parse(rawText) as unknown;
-            if (p && typeof p === "object" && !Array.isArray(p)) {
-              parsedBody = p as Record<string, unknown>;
-            }
-          } catch {
-            /* non-JSON */
-          }
-          if (!res.ok) {
-            const msg =
-              typeof parsedBody.error === "string"
-                ? parsedBody.error.trim()
-                : `Social copy failed (${res.status})`;
-            throw new GraphError(msg);
-          }
-          const text = typeof parsedBody.text === "string" ? parsedBody.text.trim() : "";
-          if (!text) throw new GraphError("Social copy returned empty text");
-          return text;
-        }
+          "Cinematic story still, cohesive world, emotionally readable moment";
 
         async function postGeneration(body: Record<string, unknown>) {
           const intent =
             typeof body.intent === "string" ? body.intent : "unknown";
           logWorkflow("info", "runner/fal", "Calling /api/fal/generation", {
             intent,
-            promptChars:
-              typeof body.prompt === "string" ? body.prompt.length : undefined,
           });
           const res = await fetch("/api/fal/generation", {
             method: "POST",
@@ -413,34 +652,17 @@ export async function runWorkflowDAG(
               parsedBody = p as Record<string, unknown>;
             }
           } catch {
-            /* non-JSON error page */
+            /* non-json */
           }
-
           if (!res.ok) {
-            const msg = extractFalProxyErrorMessage(
-              parsedBody,
-              res.status,
-              rawText,
-            );
-            logWorkflow("error", "runner/fal", "Generation HTTP error", {
-              intent,
-              httpStatus: res.status,
-              message: msg.slice(0, 4000),
-              rawPreview: rawText.slice(0, 2000),
-              parsedKeys:
-                Object.keys(parsedBody).length > 0
-                  ? Object.keys(parsedBody).join(",")
-                  : "(none)",
-            });
+            const msg = extractFalProxyErrorMessage(parsedBody, res.status, rawText);
             throw new GraphError(msg);
           }
-
           return parsedBody as Record<string, unknown>;
         }
 
         let textOut: string | undefined;
         let imageUrlOut: string | undefined;
-        let productAnchor: string | undefined;
 
         const refImgsAll = collectUpstreamImageUrls(id, incomingByTarget, outputs);
         const refUrlForGen = refImgsAll[0];
@@ -469,10 +691,10 @@ export async function runWorkflowDAG(
         }
 
         let imageGenPrompt =
-          `${diffusionPrompt}\n\nMarketing poster still, campaign-ready composition.`.trim();
+          `${diffusionPrompt}\n\nHigh-quality story illustration frame.`.trim();
         if (refUrlForGen && plan.needTextToImage) {
           imageGenPrompt =
-            `Preserve the exact product, packaging, logos, and readable label text from the reference photo; do not substitute a different SKU or conflicting branding.\n\nCreative direction:\n${diffusionPrompt}\n\nMarketing-poster composition with clean headline-safe margins.`.trim();
+            `Maintain identity, wardrobe, and environmental continuity with the reference still.\n\n${imageGenPrompt}`.trim();
         }
         imageGenPrompt = imageGenPrompt.slice(0, 4000);
 
@@ -506,28 +728,6 @@ export async function runWorkflowDAG(
           }
         }
 
-        if (plan.needMarketingSocialCopy && plan.needReferenceImageEdit && refUrlForGen) {
-          const cap = await postGeneration({
-            intent: "image-to-text",
-            imageUrl: refUrlForGen,
-          });
-          const caption =
-            typeof cap.text === "string" ? cap.text.trim() : "";
-          if (caption) productAnchor = caption;
-        }
-
-        if (plan.needMarketingSocialCopy) {
-          const campaignBrief =
-            [promptNotes, data.suffix.trim()].filter(Boolean).join("\n\n").trim() ||
-            data.suffix.trim() ||
-            diffusionPrompt;
-          textOut = await postSocialMarketingCopy({
-            campaignBrief,
-            productDescription: productAnchor?.trim(),
-            sceneBrief: diffusionPrompt.slice(0, 2500),
-          });
-        }
-
         outputs[id] = {
           type: "generation",
           text: textOut,
@@ -543,18 +743,31 @@ export async function runWorkflowDAG(
         break;
       }
       case "videoBlock": {
+        if (data.locked && reuseOutputs && reuseOutputs[id]?.type === "video") {
+          const cached = reuseOutputs[id];
+          outputs[id] = cached;
+          onNodeComplete?.({
+            nodeId: id,
+            index: step + 1,
+            total: totalSteps,
+            label,
+            output: cached,
+            reused: true,
+          });
+          break;
+        }
         const refImgs = collectUpstreamImageUrls(id, incomingByTarget, outputs);
         const sourceImageUrl = refImgs[0];
         if (!sourceImageUrl) {
           throw new GraphError(
-            "Video block needs an upstream image wired to its blue pin (e.g. from a generation block).",
+            `Video block “${label}” needs an upstream still wired to its image pin`,
           );
         }
         const upstreamText = collectUpstreamText(id, incomingByTarget, outputs).trim();
         const motion = data.motionPrompt.trim();
         const promptParts = [upstreamText, motion].filter(Boolean);
         const prompt = (promptParts.join("\n\n") || motion ||
-          "smooth subtle parallax, gentle camera push-in, ad-ready motion").slice(0, 4000);
+          "smooth subtle motion, continuity-friendly camera move").slice(0, 4000);
 
         const res = await fetch("/api/fal/generation", {
           method: "POST",
@@ -576,14 +789,10 @@ export async function runWorkflowDAG(
             parsedBody = p as Record<string, unknown>;
           }
         } catch {
-          /* non-JSON */
+          /* non-json */
         }
         if (!res.ok) {
           const msg = extractFalProxyErrorMessage(parsedBody, res.status, rawText);
-          logWorkflow("error", "runner/fal", "Video generation HTTP error", {
-            httpStatus: res.status,
-            message: msg.slice(0, 4000),
-          });
           throw new GraphError(msg);
         }
         const url =
@@ -596,101 +805,6 @@ export async function runWorkflowDAG(
           type: "video",
           url,
           sourceImageUrl,
-        };
-        onNodeComplete?.({
-          nodeId: id,
-          index: step + 1,
-          total: totalSteps,
-          label,
-          output: outputs[id],
-        });
-        break;
-      }
-      case "platformExport": {
-        const imageUrlsAll = collectUpstreamImageUrls(id, incomingByTarget, outputs);
-        const videoUrlsAll = collectUpstreamVideoUrls(id, incomingByTarget, outputs);
-        const copy = collectUpstreamText(id, incomingByTarget, outputs);
-        const caption = [copy.trim(), data.label].filter(Boolean).join("\n\n").slice(0, 2200);
-
-        const httpsImages = imageUrlsAll.filter((u) => /^https:\/\//i.test(u));
-        const httpsVideos = videoUrlsAll.filter((u) => /^https:\/\//i.test(u));
-        if (httpsImages.length === 0 && httpsVideos.length === 0) {
-          throw new GraphError(
-            `${data.platform} export needs at least one upstream image or video with a public https URL (wire a generation block's image pin or a video block's violet pin into this export's blue pin).`,
-          );
-        }
-
-        const files: { path: string; blob: Blob }[] = [];
-
-        for (let i = 0; i < httpsVideos.length; i++) {
-          const u = httpsVideos[i]!;
-          const r = await fetch(u);
-          if (!r.ok) {
-            logWorkflow("error", "runner/export", "Export video fetch failed", {
-              nodeId: id,
-              platform: data.platform,
-              httpStatus: r.status,
-            });
-            throw new GraphError("Failed to download video for export");
-          }
-          const blob = await r.blob();
-          const ext = r.headers.get("content-type")?.includes("webm") ? "webm" : "mp4";
-          const suffix = httpsVideos.length > 1 ? `-${i + 1}` : "";
-          files.push({
-            path: `platforms/${data.platform}/clip${suffix}.${ext}`,
-            blob,
-          });
-        }
-
-        if (httpsImages.length > 0) {
-          const primary = httpsImages[0]!;
-          const imgRes = await fetch(primary);
-          if (!imgRes.ok) {
-            logWorkflow("error", "runner/export", "Export image fetch failed", {
-              nodeId: id,
-              platform: data.platform,
-              httpStatus: imgRes.status,
-            });
-            throw new GraphError("Failed to download image for export");
-          }
-          const blob = await imgRes.blob();
-          files.push({
-            path: `platforms/${data.platform}/creative.png`,
-            blob,
-          });
-        }
-
-        const manifest = {
-          platform: data.platform,
-          title: data.label,
-          copy,
-          generatedAt: new Date().toISOString(),
-          sourceImage: httpsImages[0],
-          sourceImages: httpsImages,
-          sourceVideos: httpsVideos,
-          /** True when at least one video is wired into this export — drives previews + publish hints. */
-          hasVideo: httpsVideos.length > 0,
-        };
-        files.push({
-          path: `platforms/${data.platform}/manifest.json`,
-          blob: new Blob([JSON.stringify(manifest, null, 2)], {
-            type: "application/json",
-          }),
-        });
-
-        outputs[id] = {
-          type: "bundle",
-          files,
-          publish:
-            (data.platform === "facebook" || data.platform === "instagram") &&
-            httpsImages.length > 0 &&
-            httpsVideos.length === 0
-              ? {
-                  platform: data.platform,
-                  imageUrls: httpsImages.slice(0, 10),
-                  caption,
-                }
-              : undefined,
         };
         onNodeComplete?.({
           nodeId: id,

@@ -1,30 +1,15 @@
 import type { FalFluxPresetSize } from "@/lib/fal/text-to-image-config";
 import type { WorkflowEdge, WorkflowNode } from "./schema";
 
-type ExportPlatform = "youtube" | "facebook" | "instagram" | "tiktok";
-
-/**
- * Best-effort aspect preset for a platform export (labels disambiguate IG Feed vs Stories).
- */
-export function fluxPresetForExport(
-  platform: ExportPlatform,
-  label: string,
-): FalFluxPresetSize {
+/** Short-story friendly default when feeding an output preview block. */
+export function fluxPresetForOutput(label: string): FalFluxPresetSize {
   const l = label.toLowerCase();
-
-  if (platform === "tiktok") return "portrait_16_9";
-  if (platform === "youtube") return "landscape_16_9";
-
-  if (/\b(story|stories|reels)\b/.test(l)) {
-    return "portrait_16_9";
-  }
-
-  if (platform === "instagram") return "square_hd";
-
-  return "landscape_4_3";
+  if (/\b(film|movie|cinematic|horizontal)\b/.test(l)) return "landscape_16_9";
+  if (/\b(square|thumbnail)\b/.test(l)) return "square_hd";
+  return "portrait_16_9";
 }
 
-/** When one poster feeds multiple exports, pick one preset (vertical wins — others letterbox/crop in-channel). */
+/** When one poster feeds multiple outputs, pick one preset (vertical wins). */
 export function unifyFluxPresetsForSharedCreative(
   presets: FalFluxPresetSize[],
 ): FalFluxPresetSize {
@@ -36,37 +21,33 @@ export function unifyFluxPresetsForSharedCreative(
   return u.sort()[0]!;
 }
 
-function targetPlatformExport(
+function targetOutputBlock(
   nodesById: Map<string, WorkflowNode>,
   nodeId: string,
 ): WorkflowNode | undefined {
   const n = nodesById.get(nodeId);
-  return n?.data.kind === "platformExport" ? n : undefined;
+  return n?.data.kind === "outputBlock" ? n : undefined;
 }
 
-/** Generation → export on the image lane (handles nullable legacy pins). */
-function isGenerationToExportImageEdge(
+/** Generation → output preview on the media lane. */
+function isGenerationToOutputMediaEdge(
   e: WorkflowEdge,
   genId: string,
   nodesById: Map<string, WorkflowNode>,
 ): boolean {
   if (e.source !== genId) return false;
-  if (!targetPlatformExport(nodesById, e.target)) return false;
+  if (!targetOutputBlock(nodesById, e.target)) return false;
   const sh = e.sourceHandle ?? null;
   const th = e.targetHandle ?? null;
   const sourceIsImage = sh === null || sh === "image";
-  const targetIsImage = th === null || th === "image";
-  return sourceIsImage && targetIsImage;
+  const targetIsMedia = th === null || th === "media";
+  return sourceIsImage && targetIsMedia;
 }
 
 export type ReconcileImageSizesOptions = {
-  /** Stage/node ids to leave unchanged (planner set `settings.imageSize`). */
   skipNodeIds?: ReadonlySet<string>;
 };
 
-/**
- * Set each generation block's `imageSize` from downstream platform exports when it feeds them on the image pin.
- */
 export function reconcileGenerationImageSizes(
   nodes: WorkflowNode[],
   edges: WorkflowEdge[],
@@ -79,17 +60,17 @@ export function reconcileGenerationImageSizes(
     if (node.data.kind !== "generationBlock") return node;
     if (skip.has(node.id)) return node;
 
-    const exports: WorkflowNode[] = [];
+    const outputs: WorkflowNode[] = [];
     for (const e of edges) {
-      if (!isGenerationToExportImageEdge(e, node.id, byId)) continue;
+      if (!isGenerationToOutputMediaEdge(e, node.id, byId)) continue;
       const t = byId.get(e.target);
-      if (t?.data.kind === "platformExport") exports.push(t);
+      if (t?.data.kind === "outputBlock") outputs.push(t);
     }
-    if (exports.length === 0) return node;
+    if (outputs.length === 0) return node;
 
-    const presets = exports.map((n) => {
-      if (n.data.kind !== "platformExport") return "square_hd";
-      return fluxPresetForExport(n.data.platform, n.data.label);
+    const presets = outputs.map((n) => {
+      if (n.data.kind !== "outputBlock") return "square_hd";
+      return fluxPresetForOutput(n.data.label);
     });
     const imageSize = unifyFluxPresetsForSharedCreative(presets);
     if (node.data.imageSize === imageSize) return node;

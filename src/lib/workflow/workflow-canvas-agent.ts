@@ -1,4 +1,8 @@
-import { assertConnectedDAG, GraphError } from "./graph";
+import {
+  assertConnectedDAG,
+  GraphError,
+  withSceneJoinSyntheticEdges,
+} from "./graph";
 import {
   incomingMediaLanes,
   outgoingMediaLanes,
@@ -26,29 +30,25 @@ function linesFromZodError(err: ZodError): string[] {
 
 export type WorkflowValidationFailure = {
   ok: false;
-  /** Short headline for logs */
   error: string;
-  /** One line per issue (schema, graph, etc.) */
   issues: string[];
 };
 
-/**
- * Snapshot for prompts / read_workflow: drop heavy data URLs so the model sees structure without multi-MB payloads.
- */
+/** Snapshot for prompts / read_workflow: drop heavy data URLs so the model sees structure without multi-MB payloads. */
 export function stripWorkflowMediaForAgent(doc: WorkflowDocument): WorkflowDocument {
   return {
     ...doc,
     nodes: doc.nodes.map((n) => {
-      if (n.data.kind !== "mediaInput") return n;
+      if (n.data.kind !== "imagePrimitive") return n;
       return {
         ...n,
-        data: { ...n.data, images: [] },
+        data: { ...n.data, image: undefined },
       };
     }),
   };
 }
 
-/** If the model returns empty media arrays for an existing mediaInput id, keep user uploads from the prior canvas. */
+/** Keep uploaded stills when the model omits `image` on an existing image primitive id. */
 export function mergePreservedMediaFromPrevious(
   doc: WorkflowDocument,
   previous: WorkflowDocument | null,
@@ -56,17 +56,17 @@ export function mergePreservedMediaFromPrevious(
   if (!previous) return doc;
   const prevById = new Map(previous.nodes.map((n) => [n.id, n]));
   const nodes: WorkflowNode[] = doc.nodes.map((n) => {
-    if (n.data.kind !== "mediaInput") return n;
+    if (n.data.kind !== "imagePrimitive") return n;
     const prev = prevById.get(n.id);
-    if (!prev || prev.data.kind !== "mediaInput") return n;
-    const emptyNew = n.data.images.length === 0;
-    const hadPrev = prev.data.images.length > 0;
-    if (emptyNew && hadPrev) {
+    if (!prev || prev.data.kind !== "imagePrimitive") return n;
+    const emptyNew = !n.data.image?.dataUrl;
+    const hadPrev = !!prev.data.image?.dataUrl;
+    if (emptyNew && hadPrev && prev.data.image) {
       return {
         ...n,
         data: {
           ...n.data,
-          images: prev.data.images,
+          image: prev.data.image,
         },
       };
     }
@@ -76,10 +76,9 @@ export function mergePreservedMediaFromPrevious(
 }
 
 /**
- * Prepends images pasted/attached from the workflow chat onto the primary `mediaInput`
- * (top-left-ish hub). Safe for empty arrays; skips non-image data URLs.
+ * Fills composer-attached stills into the first available `imagePrimitive` slots (one image per primitive).
  */
-export function mergeComposerImagesIntoPrimaryMediaInput(
+export function mergeComposerImagesIntoPrimaryImagePrimitive(
   doc: WorkflowDocument,
   assets: MediaInputAsset[],
 ): WorkflowDocument {
@@ -88,23 +87,17 @@ export function mergeComposerImagesIntoPrimaryMediaInput(
   );
   if (!safe.length) return doc;
 
-  const mediaNodes = doc.nodes.filter((n) => n.data.kind === "mediaInput");
-  if (!mediaNodes.length) return doc;
-
-  const primary = [...mediaNodes].sort((a, b) => {
-    const dy = a.position.y - b.position.y;
-    if (Math.abs(dy) > 24) return dy;
-    return a.position.x - b.position.x;
-  })[0]!;
-
+  let idx = 0;
   const nodes = doc.nodes.map((n) => {
-    if (n.id !== primary.id || n.data.kind !== "mediaInput") return n;
-    const prepend = safe.map(({ dataUrl, fileName }) => ({ dataUrl, fileName }));
+    if (n.data.kind !== "imagePrimitive" || idx >= safe.length) return n;
+    if (n.data.image?.dataUrl) return n;
+    const a = safe[idx]!;
+    idx += 1;
     return {
       ...n,
       data: {
         ...n.data,
-        images: [...prepend, ...n.data.images],
+        image: { dataUrl: a.dataUrl, fileName: a.fileName },
       },
     };
   });
@@ -159,7 +152,7 @@ export function validateAndFinalizeWorkflowWrite(
   };
 
   try {
-    assertConnectedDAG(doc.nodes, doc.edges);
+    assertConnectedDAG(doc.nodes, withSceneJoinSyntheticEdges(doc.nodes, doc.edges));
     const incomingByTarget = buildIncomingByTarget(doc.edges);
     for (const node of doc.nodes) {
       if (node.data.kind === "generationBlock") {
@@ -175,15 +168,7 @@ export function validateAndFinalizeWorkflowWrite(
         );
         if (!hasImageIn) {
           throw new GraphError(
-            `Video block "${node.data.label || node.id}" needs an image input on its blue pin (wire a generationBlock's image output or a mediaInput's image lane).`,
-          );
-        }
-        const hasVideoOut = doc.edges.some(
-          (e) => e.source === node.id && e.sourceHandle === "video",
-        );
-        if (!hasVideoOut) {
-          throw new GraphError(
-            `Video block "${node.data.label || node.id}" needs at least one outgoing wire from its violet video pin (typically into a platformExport blue pin).`,
+            `Video block "${node.data.label || node.id}" needs an upstream still wired to its blue image pin.`,
           );
         }
       }
