@@ -762,7 +762,7 @@ export function WorkflowEditor() {
                   ? "Add nodes first"
                   : runPhase === "running"
                     ? "Workflow is running"
-                    : "Arrange nodes by dependency columns"
+                    : "Arrange the canvas: story lanes (globals + scene rows → stills → clips → join) when you have image gens; otherwise dependency columns."
               }
               className="rounded-md border border-border bg-card px-3 py-1 text-xs font-medium text-card-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
               onClick={applyAutoLayout}

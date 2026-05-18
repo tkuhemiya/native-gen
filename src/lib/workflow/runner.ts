@@ -122,6 +122,13 @@ function collectUpstreamText(
       if (t) parts.push(t);
       continue;
     }
+    if (upstream.type === "sceneContext") {
+      if (edge.sourceHandle === "script") {
+        const t = upstream.script?.trim();
+        if (t) parts.push(t);
+      }
+      continue;
+    }
     if (upstream.type === "text") {
       if (edge.sourceHandle === "image") continue;
       parts.push(upstream.value);

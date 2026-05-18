@@ -4,7 +4,45 @@ import { Handle, Position, useEdges, useReactFlow, type NodeProps } from "@xyflo
 import { saveAs } from "file-saver";
 import { useNodeRunOutput, useWorkflowRunContext } from "@/components/workflow/WorkflowRunContext";
 import type { AppNode } from "@/lib/workflow/app-node";
+import { type StoryNodeRole, inferTextPrimitiveStoryRole } from "@/lib/workflow/story-node-role";
 import { NodeLockButton } from "@/components/workflow/nodes/NodeLockButton";
+
+const STORY_ROLE_BADGE: Record<
+  StoryNodeRole,
+  { label: string; className: string }
+> = {
+  lore: {
+    label: "Lore",
+    className:
+      "border-amber-500/40 bg-amber-500/12 text-amber-950 dark:text-amber-200",
+  },
+  world: {
+    label: "World",
+    className:
+      "border-violet-500/40 bg-violet-500/12 text-violet-950 dark:text-violet-200",
+  },
+  character: {
+    label: "Character",
+    className: "border-rose-500/40 bg-rose-500/12 text-rose-950 dark:text-rose-200",
+  },
+  place: {
+    label: "Place",
+    className: "border-cyan-500/40 bg-cyan-500/12 text-cyan-950 dark:text-cyan-200",
+  },
+  plot: {
+    label: "Plot",
+    className: "border-sky-500/40 bg-sky-500/12 text-sky-950 dark:text-sky-200",
+  },
+  scene: {
+    label: "Scene",
+    className:
+      "border-emerald-600/45 bg-emerald-600/12 text-emerald-950 dark:text-emerald-200",
+  },
+  other: {
+    label: "Text",
+    className: "border-muted-foreground/30 bg-muted/50 text-muted-foreground",
+  },
+};
 
 function lockableTextPopulated(
   data: Extract<AppNode["data"], { kind: "textPrimitive" }>,
@@ -32,6 +70,8 @@ export function TextPrimitiveNode(props: NodeProps<AppNode>) {
   if (data.kind !== "textPrimitive") return null;
 
   const populated = lockableTextPopulated(data, runOut);
+  const storyRole = inferTextPrimitiveStoryRole(data.label, data.purpose);
+  const roleBadge = STORY_ROLE_BADGE[storyRole];
 
   return (
     <div
@@ -56,10 +96,18 @@ export function TextPrimitiveNode(props: NodeProps<AppNode>) {
       />
       <div className="mb-2 flex items-start justify-between gap-2 pr-9">
         <div className="min-w-0">
-          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Text
+          <div className="flex flex-wrap items-center gap-1.5">
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Text
+            </div>
+            <span
+              title="Inferred story layer from label/purpose — set Purpose for clearer layout & grouping."
+              className={`rounded border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${roleBadge.className}`}
+            >
+              {roleBadge.label}
+            </span>
           </div>
-          <p className="text-[9px] text-muted-foreground">
+          <p className="mt-0.5 text-[9px] text-muted-foreground">
             Lore, beats, dialogue — merges upstream by node id.
           </p>
         </div>
@@ -88,7 +136,7 @@ export function TextPrimitiveNode(props: NodeProps<AppNode>) {
       </label>
       <input
         className="mb-2 w-full rounded-md border border-border bg-muted px-2 py-1 text-xs text-foreground outline-none"
-        placeholder="lore · beat · outline…"
+        placeholder="lore · world · character · place · plot · scene…"
         value={data.purpose}
         onChange={(e) => updateNodeData(id, { ...data, purpose: e.target.value })}
       />

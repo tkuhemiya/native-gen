@@ -67,7 +67,7 @@ export const nodeDataSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("imagePrimitive"),
     label: z.string(),
-    /** Prompt / intent describing what belongs in this still (fed into generators upstream). */
+    /** Authoring note for this still — not merged into gen/video prompts; use textPrimitives wired to gen for canon prose. */
     prompt: z.string(),
     /** Optional local photo — otherwise rely on upstream image wires after generation. */
     image: mediaAssetSchema.optional(),

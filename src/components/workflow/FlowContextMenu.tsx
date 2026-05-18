@@ -118,7 +118,13 @@ export function FlowContextMenuPortal({
             Preview · download
           </button>
           <p className={labelCls}>Canvas</p>
-          <button type="button" role="menuitem" className={itemCls} onClick={() => onTidyLayout()}>
+          <button
+            type="button"
+            role="menuitem"
+            className={itemCls}
+            title="Story lanes when image gens exist (group lore/plot/character; one row per scene); else DAG columns."
+            onClick={() => onTidyLayout()}
+          >
             Tidy layout
           </button>
           <p className={labelCls}>File</p>
