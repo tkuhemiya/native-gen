@@ -4,6 +4,7 @@ import { Handle, Position, useEdges, useReactFlow, type NodeProps } from "@xyflo
 import { saveAs } from "file-saver";
 import { useNodeRunOutput, useWorkflowRunContext } from "@/components/workflow/WorkflowRunContext";
 import type { AppNode } from "@/lib/workflow/app-node";
+import { NodeLockButton } from "@/components/workflow/nodes/NodeLockButton";
 
 function lockableTextPopulated(
   data: Extract<AppNode["data"], { kind: "textPrimitive" }>,
@@ -34,23 +35,32 @@ export function TextPrimitiveNode(props: NodeProps<AppNode>) {
 
   return (
     <div
-      className={`min-w-[260px] max-w-[320px] rounded-lg border border-border bg-card px-3 py-2 text-card-foreground shadow-sm${
+      className={`relative min-w-[260px] max-w-[320px] rounded-lg border border-border bg-card px-3 py-2 text-card-foreground shadow-sm${
         runningHere ? " ring-2 ring-emerald-500 ring-offset-2 ring-offset-background" : ""
       }`}
     >
+      <NodeLockButton
+        locked={data.locked}
+        disabled={!populated}
+        disabledTitle="Populate this text before locking"
+        lockedTitle="Locked — skip regeneration when satisfied on the next Run"
+        unlockedTitle="Unlocked — will regenerate on Run"
+        variant="card"
+        onToggle={(locked) => updateNodeData(id, { ...data, locked })}
+      />
       <Handle
         type="target"
         position={Position.Left}
         id="text"
         className="!left-[-6px] !top-[40%] !h-3 !w-3 !border-2 !border-card !bg-emerald-500"
       />
-      <div className="mb-2 flex items-start justify-between gap-2">
-        <div>
+      <div className="mb-2 flex items-start justify-between gap-2 pr-9">
+        <div className="min-w-0">
           <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Text primitive
+            Text
           </div>
           <p className="text-[9px] text-muted-foreground">
-            Lore, beats, dialogue — upstream text merges deterministically by node id.
+            Lore, beats, dialogue — merges upstream by node id.
           </p>
         </div>
         <Handle
@@ -60,6 +70,13 @@ export function TextPrimitiveNode(props: NodeProps<AppNode>) {
           className="!right-[-6px] !top-[40%] !h-3 !w-3 !border-2 !border-card !bg-emerald-500"
         />
       </div>
+      <label className="mb-1 block text-[10px] font-medium text-muted-foreground">Prompt</label>
+      <textarea
+        className="nodrag nopan nowheel mb-2 h-14 w-full resize-none rounded-md border border-border bg-muted px-2 py-1.5 text-xs text-foreground outline-none"
+        placeholder="Intent for this block…"
+        value={data.prompt}
+        onChange={(e) => updateNodeData(id, { ...data, prompt: e.target.value })}
+      />
       <label className="mb-1 block text-[10px] font-medium text-muted-foreground">Label</label>
       <input
         className="mb-2 w-full rounded-md border border-border bg-muted px-2 py-1 text-xs text-foreground outline-none"
@@ -75,31 +92,12 @@ export function TextPrimitiveNode(props: NodeProps<AppNode>) {
         value={data.purpose}
         onChange={(e) => updateNodeData(id, { ...data, purpose: e.target.value })}
       />
-      <label className="mb-1 block text-[10px] font-medium text-muted-foreground">
-        Prompt / intent (saved on node)
-      </label>
-      <textarea
-        className="nodrag nopan nowheel mb-2 h-12 w-full resize-none rounded-md border border-border bg-muted px-2 py-1 text-xs text-foreground outline-none"
-        value={data.prompt}
-        onChange={(e) => updateNodeData(id, { ...data, prompt: e.target.value })}
-      />
       <label className="mb-1 block text-[10px] font-medium text-muted-foreground">Body</label>
       <textarea
         className="nodrag nopan nowheel mb-2 min-h-[72px] w-full resize-y rounded-md border border-border bg-muted px-2 py-1 text-xs text-foreground outline-none"
         value={data.value}
         onChange={(e) => updateNodeData(id, { ...data, value: e.target.value })}
       />
-      <label className="flex cursor-pointer items-center gap-2 text-[10px] text-muted-foreground">
-        <input
-          type="checkbox"
-          className="h-3 w-3"
-          checked={data.locked}
-          disabled={!populated}
-          title={!populated ? "Populate this text before locking" : undefined}
-          onChange={(e) => updateNodeData(id, { ...data, locked: e.target.checked })}
-        />
-        Lock — skip regeneration once this block is satisfied on the next Run
-      </label>
       {runOut?.type === "text" ? (
         <p className="mt-2 border-t border-border pt-2 text-[9px] text-muted-foreground">
           Last run length: {runOut.value.trim().length} chars
@@ -123,10 +121,19 @@ export function ImagePrimitiveNode(props: NodeProps<AppNode>) {
 
   return (
     <div
-      className={`min-w-[260px] max-w-[320px] rounded-lg border border-border bg-card px-3 py-2 text-card-foreground shadow-sm${
+      className={`relative min-w-[260px] max-w-[320px] rounded-lg border border-border bg-card px-3 py-2 text-card-foreground shadow-sm${
         runningHere ? " ring-2 ring-sky-500 ring-offset-2 ring-offset-background" : ""
       }`}
     >
+      <NodeLockButton
+        locked={data.locked}
+        disabled={!populated}
+        disabledTitle="Add an image (upload or upstream) before locking"
+        lockedTitle="Locked — skip regeneration when satisfied"
+        unlockedTitle="Unlocked — will regenerate on Run"
+        variant="card"
+        onToggle={(locked) => updateNodeData(id, { ...data, locked })}
+      />
       <Handle
         type="target"
         position={Position.Left}
@@ -141,13 +148,13 @@ export function ImagePrimitiveNode(props: NodeProps<AppNode>) {
         style={{ bottom: 14, top: "auto" }}
         className="!left-[-6px] !h-3 !w-3 !border-2 !border-card !bg-sky-500"
       />
-      <div className="mb-2 flex items-start justify-between gap-2">
-        <div>
+      <div className="mb-2 flex items-start justify-between gap-2 pr-9">
+        <div className="min-w-0">
           <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Image primitive
+            Image
           </div>
           <p className="text-[9px] text-muted-foreground">
-            One still per node — upload locally or inherit a generated URL from upstream.
+            One still — upload or inherit from upstream.
           </p>
         </div>
         <Handle
@@ -158,19 +165,18 @@ export function ImagePrimitiveNode(props: NodeProps<AppNode>) {
           className="!right-[-6px] !h-3 !w-3 !border-2 !border-card !bg-sky-500"
         />
       </div>
+      <label className="mb-1 block text-[10px] font-medium text-muted-foreground">Prompt</label>
+      <textarea
+        className="nodrag nopan nowheel mb-2 h-14 w-full resize-none rounded-md border border-border bg-muted px-2 py-1.5 text-xs text-foreground outline-none"
+        placeholder="Describe the still you want…"
+        value={data.prompt}
+        onChange={(e) => updateNodeData(id, { ...data, prompt: e.target.value })}
+      />
       <label className="mb-1 block text-[10px] font-medium text-muted-foreground">Label</label>
       <input
         className="mb-2 w-full rounded-md border border-border bg-muted px-2 py-1 text-xs text-foreground outline-none"
         value={data.label}
         onChange={(e) => updateNodeData(id, { ...data, label: e.target.value })}
-      />
-      <label className="mb-1 block text-[10px] font-medium text-muted-foreground">
-        Prompt / intent
-      </label>
-      <textarea
-        className="nodrag nopan nowheel mb-2 h-10 w-full resize-none rounded-md border border-border bg-muted px-2 py-1 text-xs text-foreground outline-none"
-        value={data.prompt}
-        onChange={(e) => updateNodeData(id, { ...data, prompt: e.target.value })}
       />
       <label className="mb-1 block text-[10px] font-medium text-muted-foreground">
         Upload still (optional)
@@ -201,17 +207,6 @@ export function ImagePrimitiveNode(props: NodeProps<AppNode>) {
           className="mb-2 max-h-32 w-full rounded-md border border-border object-contain"
         />
       ) : null}
-      <label className="flex cursor-pointer items-center gap-2 text-[10px] text-muted-foreground">
-        <input
-          type="checkbox"
-          className="h-3 w-3"
-          checked={data.locked}
-          disabled={!populated}
-          title={!populated ? "Add an image (upload or upstream) before locking" : undefined}
-          onChange={(e) => updateNodeData(id, { ...data, locked: e.target.checked })}
-        />
-        Lock — skip regeneration once this block is satisfied
-      </label>
     </div>
   );
 }
@@ -228,10 +223,19 @@ export function SceneComposeNode(props: NodeProps<AppNode>) {
   const populated = runOut?.type === "sceneContext";
   return (
     <div
-      className={`min-w-[280px] max-w-[340px] rounded-lg border border-border bg-card px-3 py-2 text-card-foreground shadow-sm${
+      className={`relative min-w-[280px] max-w-[340px] rounded-lg border border-border bg-card px-3 py-2 text-card-foreground shadow-sm${
         runningHere ? " ring-2 ring-amber-500 ring-offset-2 ring-offset-background" : ""
       }`}
     >
+      <NodeLockButton
+        locked={data.locked}
+        disabled={!populated}
+        disabledTitle="Run once to produce bundled context before locking"
+        lockedTitle="Locked — reuse bundled scene context on the next Run"
+        unlockedTitle="Unlocked — will rebuild context on Run"
+        variant="inset"
+        onToggle={(locked) => updateNodeData(id, { ...data, locked })}
+      />
       <div className="relative mb-2 flex gap-2">
         <div className="flex shrink-0 flex-col justify-between gap-6 py-1">
           <Handle
@@ -259,7 +263,7 @@ export function SceneComposeNode(props: NodeProps<AppNode>) {
             title="Still B"
           />
         </div>
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 pr-8">
           <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
             Scene composer
           </div>
@@ -272,16 +276,6 @@ export function SceneComposeNode(props: NodeProps<AppNode>) {
             value={data.label}
             onChange={(e) => updateNodeData(id, { ...data, label: e.target.value })}
           />
-          <label className="mt-2 flex items-center gap-2 text-[10px] text-muted-foreground">
-            <input
-              type="checkbox"
-              className="h-3 w-3"
-              checked={data.locked}
-              disabled={!populated}
-              onChange={(e) => updateNodeData(id, { ...data, locked: e.target.checked })}
-            />
-            Lock bundled context once produced
-          </label>
           {runOut?.type === "sceneContext" ? (
             <p className="mt-2 rounded-md bg-muted/40 p-2 text-[9px] leading-snug text-foreground">
               {runOut.script.slice(0, 220)}

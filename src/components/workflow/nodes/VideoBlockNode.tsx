@@ -16,6 +16,7 @@ import {
   type VideoAspectRatio,
   type VideoResolution,
 } from "@/lib/workflow/schema";
+import { NodeLockButton } from "@/components/workflow/nodes/NodeLockButton";
 
 const ASPECT_LABELS: Record<VideoAspectRatio, string> = {
   "9:16": "9:16 portrait (Reels / Shorts / TikTok)",
@@ -65,12 +66,23 @@ export function VideoBlockNode(props: NodeProps<AppNode>) {
     }
   }, [data, id, durationSafe, updateNodeData]);
 
+  const videoReady = runOut?.type === "video" && !!runOut.url?.trim();
+
   return (
     <div
-      className={`min-w-[260px] max-w-[320px] rounded-lg border border-border bg-card px-3 py-2 text-card-foreground shadow-sm${
+      className={`relative min-w-[260px] max-w-[320px] rounded-lg border border-border bg-card px-3 py-2 text-card-foreground shadow-sm${
         runningHere ? " ring-2 ring-violet-500 ring-offset-2 ring-offset-background" : ""
       }`}
     >
+      <NodeLockButton
+        locked={data.locked}
+        disabled={!videoReady}
+        disabledTitle="Render once before locking"
+        lockedTitle="Locked — reuse rendered clip on the next Run when satisfied"
+        unlockedTitle="Unlocked — will re-render on Run"
+        variant="inset"
+        onToggle={(locked) => updateNodeData(id, { ...data, locked })}
+      />
       <div className="relative mb-2 flex gap-3">
         <div className="flex shrink-0 flex-col justify-between gap-8 py-1">
           <Handle
@@ -92,24 +104,24 @@ export function VideoBlockNode(props: NodeProps<AppNode>) {
         </div>
 
         <div className="min-w-0 flex-1">
-          <div className="mb-1 flex items-center justify-between gap-2">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400">
-              Animate · video
-            </span>
-            <span
-              className="text-[9px] text-muted-foreground"
-              title="Wire a generated still into the blue pin to animate it. Optional motion brief on the green pin (camera movement, action, mood)."
-            >
-              fal Wan i2v
-            </span>
+          <div className="mb-1.5 flex items-start justify-between gap-2 pr-8">
+            <div className="min-w-0">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400">
+                Video Block
+              </span>
+              <p
+                className="mt-0.5 text-[9px] leading-snug text-muted-foreground"
+                title="Blue pin: source still · green pin: optional motion brief."
+              >
+                fal Wan i2v — image in (required)
+              </p>
+            </div>
           </div>
-          <label className="block text-[10px] font-medium text-muted-foreground">
-            Motion / camera prompt
-          </label>
+          <label className="block text-[10px] font-medium text-muted-foreground">Prompt</label>
           <textarea
-            className="nodrag nopan nowheel mt-1 h-12 w-full resize-none rounded-md border border-border bg-muted px-2 py-1 text-xs text-foreground outline-none"
+            className="nodrag nopan nowheel mt-1 h-14 w-full resize-none rounded-md border border-border bg-muted px-2 py-1.5 text-xs text-foreground outline-none"
             value={data.motionPrompt}
-            placeholder="e.g. slow push-in, gentle parallax, subtle ambient motion"
+            placeholder="Motion, camera, mood…"
             onChange={(e) => updateNodeData(id, { ...data, motionPrompt: e.target.value })}
           />
           <div className="mt-2 grid grid-cols-2 gap-2">
@@ -172,21 +184,6 @@ export function VideoBlockNode(props: NodeProps<AppNode>) {
               </select>
             </label>
           </div>
-          <label className="mt-2 flex items-center gap-2 text-[10px] text-muted-foreground">
-            <input
-              type="checkbox"
-              className="h-3 w-3"
-              checked={data.locked}
-              disabled={!(runOut?.type === "video" && !!runOut.url?.trim())}
-              title={
-                !(runOut?.type === "video" && !!runOut.url?.trim())
-                  ? "Render once before locking"
-                  : undefined
-              }
-              onChange={(e) => updateNodeData(id, { ...data, locked: e.target.checked })}
-            />
-            Lock — reuse rendered clip on next Run when satisfied
-          </label>
         </div>
 
         <div className="flex shrink-0 flex-col justify-center gap-8 py-1">

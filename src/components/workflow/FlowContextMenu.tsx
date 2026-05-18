@@ -64,7 +64,7 @@ export function FlowContextMenuPortal({
             className={itemCls}
             onClick={() => onAddBlock("textPrimitive")}
           >
-            Text primitive
+            Text
           </button>
           <button
             type="button"
@@ -72,7 +72,7 @@ export function FlowContextMenuPortal({
             className={itemCls}
             onClick={() => onAddBlock("imagePrimitive")}
           >
-            Image primitive
+            Image · still
           </button>
           <p className={labelCls}>Scene graph</p>
           <button
@@ -98,7 +98,7 @@ export function FlowContextMenuPortal({
             className={itemCls}
             onClick={() => onAddBlock("generationBlock")}
           >
-            Generation block (image)
+            Image · generate
           </button>
           <button
             type="button"
@@ -106,7 +106,7 @@ export function FlowContextMenuPortal({
             className={itemCls}
             onClick={() => onAddBlock("videoBlock")}
           >
-            Animate · image → video
+            Video Block
           </button>
           <p className={labelCls}>Output</p>
           <button

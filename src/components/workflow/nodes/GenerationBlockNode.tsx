@@ -18,6 +18,7 @@ import {
   type FalFluxPresetSize,
 } from "@/lib/fal/text-to-image-config";
 import type { AppNode } from "@/lib/workflow/app-node";
+import { NodeLockButton } from "@/components/workflow/nodes/NodeLockButton";
 
 const ASPECT_UI_ORDER = [
   "landscape_16_9",
@@ -101,12 +102,25 @@ export function GenerationBlockNode(props: NodeProps<AppNode>) {
 
   const openImageSection = edgesOut.hasImageOut || edgesOut.none;
 
+  const genReady =
+    runOut?.type === "generation" &&
+    (!!runOut.imageUrl?.trim() || !!runOut.text?.trim());
+
   return (
     <div
-      className={`min-w-[260px] max-w-[340px] rounded-lg border border-border bg-card px-3 py-2 text-card-foreground shadow-sm${
+      className={`relative min-w-[260px] max-w-[340px] rounded-lg border border-border bg-card px-3 py-2 text-card-foreground shadow-sm${
         runningHere ? " ring-2 ring-primary ring-offset-2 ring-offset-background" : ""
       }`}
     >
+      <NodeLockButton
+        locked={data.locked}
+        disabled={!genReady}
+        disabledTitle="Run once to produce output before locking"
+        lockedTitle="Locked — reuse prior generation on the next Run when satisfied"
+        unlockedTitle="Unlocked — will regenerate on Run"
+        variant="inset"
+        onToggle={(locked) => updateNodeData(id, { ...data, locked })}
+      />
       <div className="relative mb-2 flex gap-3">
         <div className="flex shrink-0 flex-col justify-between gap-8 py-1">
           <Handle
@@ -128,27 +142,28 @@ export function GenerationBlockNode(props: NodeProps<AppNode>) {
         </div>
 
         <div className="min-w-0 flex-1">
-          <div className="mb-1 flex items-center justify-between gap-2">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Generate
-            </span>
-            <span
-              className="text-[9px] text-muted-foreground"
-              title="Green pins carry text; blue pins carry reference stills for edits."
-            >
-              Story still · optional caption path
-            </span>
+          <div className="mb-1.5 flex items-start justify-between gap-2 pr-8">
+            <div className="min-w-0">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Image
+              </span>
+              <p
+                className="mt-0.5 text-[9px] leading-snug text-muted-foreground"
+                title="Green pins: text in · blue pins: reference stills. Outputs story still + optional caption."
+              >
+                Story still — text & refs in
+              </p>
+            </div>
           </div>
           {!edgesOut.none && edgesOut.hasTextOut && !edgesOut.hasImageOut ? (
             <p className="mb-2 rounded-md bg-muted/80 px-2 py-1 text-[9px] leading-snug text-muted-foreground">
               Text-only output connected — expand Image below after wiring the image pin if you need visuals.
             </p>
           ) : null}
-          <label className="block text-[10px] font-medium text-muted-foreground">
-            Prompt suffix / style
-          </label>
+          <label className="block text-[10px] font-medium text-muted-foreground">Prompt</label>
           <textarea
-            className="nodrag nopan nowheel mt-1 h-12 w-full resize-none rounded-md border border-border bg-muted px-2 py-1 text-xs text-foreground outline-none"
+            className="nodrag nopan nowheel mt-1 h-14 w-full resize-none rounded-md border border-border bg-muted px-2 py-1.5 text-xs text-foreground outline-none"
+            placeholder="Style, scene, suffix…"
             value={data.suffix}
             onChange={(e) => updateNodeData(id, { ...data, suffix: e.target.value })}
           />
@@ -203,23 +218,6 @@ export function GenerationBlockNode(props: NodeProps<AppNode>) {
               </div>
             </div>
           </CollapsibleSection>
-          <label className="mt-2 flex items-center gap-2 text-[10px] text-muted-foreground">
-            <input
-              type="checkbox"
-              className="h-3 w-3"
-              checked={data.locked}
-              disabled={
-                !(runOut?.type === "generation" && (!!runOut.imageUrl?.trim() || !!runOut.text?.trim()))
-              }
-              title={
-                !(runOut?.type === "generation" && (!!runOut.imageUrl?.trim() || !!runOut.text?.trim()))
-                  ? "Run once to produce output before locking"
-                  : undefined
-              }
-              onChange={(e) => updateNodeData(id, { ...data, locked: e.target.checked })}
-            />
-            Lock — reuse prior generation on next Run when satisfied
-          </label>
         </div>
 
         <div className="flex shrink-0 flex-col justify-between gap-8 py-1">
