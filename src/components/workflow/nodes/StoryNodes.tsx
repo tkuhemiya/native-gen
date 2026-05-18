@@ -62,24 +62,8 @@ function lockableTextPopulated(
   return runOut?.type === "text" && !!runOut.value.trim();
 }
 
-function lockableLiteralTextPopulated(
-  data: Extract<AppNode["data"], { kind: "textLiteral" }>,
-  runOut: ReturnType<typeof useNodeRunOutput>,
-) {
-  if (data.value.trim().length > 0) return true;
-  return runOut?.type === "text" && !!runOut.value.trim();
-}
-
 function lockableImagePopulated(
   data: Extract<AppNode["data"], { kind: "imagePrimitive" }>,
-  runOut: ReturnType<typeof useNodeRunOutput>,
-) {
-  if (data.image?.dataUrl?.trim()) return true;
-  return runOut?.type === "image" && !!runOut.url?.trim();
-}
-
-function lockableImageLiteralPopulated(
-  data: Extract<AppNode["data"], { kind: "imageLiteral" }>,
   runOut: ReturnType<typeof useNodeRunOutput>,
 ) {
   if (data.image?.dataUrl?.trim()) return true;
@@ -109,8 +93,8 @@ export function TextPrimitiveNode(props: NodeProps<AppNode>) {
         locked={data.locked}
         disabled={!populated}
         disabledTitle="Populate this text before locking"
-        lockedTitle="Locked — skip regeneration when satisfied on the next Run"
-        unlockedTitle="Unlocked — will regenerate on Run"
+        lockedTitle="Locked — prompt + body only on Run (no upstream text merge)"
+        unlockedTitle="Unlocked — merges upstream text + prompt + body on Run"
         variant="card"
         onToggle={(locked) => updateNodeData(id, { ...data, locked })}
       />
@@ -134,7 +118,7 @@ export function TextPrimitiveNode(props: NodeProps<AppNode>) {
             </span>
           </div>
           <p className="mt-0.5 text-[9px] text-muted-foreground">
-            Lore, beats, dialogue — merges upstream by node id.
+            Unlocked: merges upstream by node id. Locked: frozen prompt + body (no upstream merge).
           </p>
         </div>
         <Handle
@@ -151,88 +135,6 @@ export function TextPrimitiveNode(props: NodeProps<AppNode>) {
         value={data.prompt}
         onChange={(e) => updateNodeData(id, { ...data, prompt: e.target.value })}
       />
-      <label className="mb-1 block text-[10px] font-medium text-muted-foreground">Label</label>
-      <input
-        className="mb-2 w-full rounded-md border border-border bg-muted px-2 py-1 text-xs text-foreground outline-none"
-        value={data.label}
-        onChange={(e) => updateNodeData(id, { ...data, label: e.target.value })}
-      />
-      <label className="mb-1 block text-[10px] font-medium text-muted-foreground">
-        Purpose tag (UX only)
-      </label>
-      <input
-        className="mb-2 w-full rounded-md border border-border bg-muted px-2 py-1 text-xs text-foreground outline-none"
-        placeholder="lore · world · character · place · plot · script · storyboard · scene…"
-        value={data.purpose}
-        onChange={(e) => updateNodeData(id, { ...data, purpose: e.target.value })}
-      />
-      <label className="mb-1 block text-[10px] font-medium text-muted-foreground">Body</label>
-      <textarea
-        className="nodrag nopan nowheel mb-2 min-h-[72px] w-full resize-y rounded-md border border-border bg-muted px-2 py-1 text-xs text-foreground outline-none"
-        value={data.value}
-        onChange={(e) => updateNodeData(id, { ...data, value: e.target.value })}
-      />
-      {runOut?.type === "text" ? (
-        <p className="mt-2 border-t border-border pt-2 text-[9px] text-muted-foreground">
-          Last run length: {runOut.value.trim().length} chars
-        </p>
-      ) : null}
-    </div>
-  );
-}
-
-export function TextLiteralNode(props: NodeProps<AppNode>) {
-  const { data, id } = props;
-  const { updateNodeData } = useReactFlow();
-  const runOut = useNodeRunOutput(id);
-  const { activeNodeId, phase } = useWorkflowRunContext();
-  const runningHere = phase === "running" && activeNodeId === id;
-
-  if (data.kind !== "textLiteral") return null;
-
-  const populated = lockableLiteralTextPopulated(data, runOut);
-  const storyRole = inferTextPrimitiveStoryRole(data.label, data.purpose);
-  const roleBadge = STORY_ROLE_BADGE[storyRole];
-
-  return (
-    <div
-      className={`relative min-w-[260px] max-w-[320px] rounded-lg border border-border bg-card px-3 py-2 text-card-foreground shadow-sm${
-        runningHere ? " ring-2 ring-emerald-500 ring-offset-2 ring-offset-background" : ""
-      }`}
-    >
-      <NodeLockButton
-        locked={data.locked}
-        disabled={!populated}
-        disabledTitle="Add body text before locking"
-        lockedTitle="Locked — reuse last run output on the next Run"
-        unlockedTitle="Unlocked — always emit current body on Run"
-        variant="card"
-        onToggle={(locked) => updateNodeData(id, { ...data, locked })}
-      />
-      <div className="mb-2 flex items-start justify-between gap-2 pr-9">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Text (literal)
-            </div>
-            <span
-              title="Inferred story layer from label/purpose — set Purpose for clearer layout & grouping."
-              className={`rounded border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${roleBadge.className}`}
-            >
-              {roleBadge.label}
-            </span>
-          </div>
-          <p className="mt-0.5 text-[9px] text-muted-foreground">
-            Canon copy only — Run passes this body downstream as-is (no merge, no generation).
-          </p>
-        </div>
-        <Handle
-          type="source"
-          position={Position.Right}
-          id="text"
-          className="!right-[-6px] !top-[40%] !h-3 !w-3 !border-2 !border-card !bg-emerald-500"
-        />
-      </div>
       <label className="mb-1 block text-[10px] font-medium text-muted-foreground">Label</label>
       <input
         className="mb-2 w-full rounded-md border border-border bg-muted px-2 py-1 text-xs text-foreground outline-none"
@@ -285,8 +187,8 @@ export function ImagePrimitiveNode(props: NodeProps<AppNode>) {
         locked={data.locked}
         disabled={!populated}
         disabledTitle="Upload a still (or wire upstream to the blue pin) before locking"
-        lockedTitle="Locked — skip refresh when satisfied on the next Run"
-        unlockedTitle="Unlocked — will resolve upload + upstream on Run"
+        lockedTitle="Locked — upload only on Run (no upstream image merge)"
+        unlockedTitle="Unlocked — upload + upstream blue-pin merge on Run"
         variant="card"
         onToggle={(locked) => updateNodeData(id, { ...data, locked })}
       />
@@ -310,7 +212,7 @@ export function ImagePrimitiveNode(props: NodeProps<AppNode>) {
             Image (merge)
           </div>
           <p className="text-[9px] text-muted-foreground">
-            Upload or inherit a still from upstream image wires.
+            Unlocked: upload or inherit from upstream blue pin. Locked: fixed upload only.
           </p>
         </div>
         <Handle
@@ -337,94 +239,6 @@ export function ImagePrimitiveNode(props: NodeProps<AppNode>) {
       <label className="mb-1 block text-[10px] font-medium text-muted-foreground">
         Upload still (optional)
       </label>
-      <input
-        type="file"
-        accept="image/*"
-        className="mb-2 w-full text-[10px] file:mr-2 file:rounded-md file:border file:border-border file:bg-card file:px-2 file:py-1"
-        onChange={(e) => {
-          const f = e.target.files?.[0];
-          e.target.value = "";
-          if (!f) return;
-          const reader = new FileReader();
-          reader.onload = () => {
-            updateNodeData(id, {
-              ...data,
-              image: { dataUrl: String(reader.result), fileName: f.name },
-            });
-          };
-          reader.readAsDataURL(f);
-        }}
-      />
-      {previewUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={previewUrl}
-          alt=""
-          className="mb-2 max-h-32 w-full rounded-md border border-border object-contain"
-        />
-      ) : null}
-    </div>
-  );
-}
-
-export function ImageLiteralNode(props: NodeProps<AppNode>) {
-  const { data, id } = props;
-  const { updateNodeData } = useReactFlow();
-  const runOut = useNodeRunOutput(id);
-  const { activeNodeId, phase } = useWorkflowRunContext();
-  const runningHere = phase === "running" && activeNodeId === id;
-
-  if (data.kind !== "imageLiteral") return null;
-
-  const populated = lockableImageLiteralPopulated(data, runOut);
-  const previewUrl = data.image?.dataUrl ?? (runOut?.type === "image" ? runOut.url : undefined);
-
-  return (
-    <div
-      className={`relative min-w-[260px] max-w-[320px] rounded-lg border border-border bg-card px-3 py-2 text-card-foreground shadow-sm${
-        runningHere ? " ring-2 ring-sky-500 ring-offset-2 ring-offset-background" : ""
-      }`}
-    >
-      <NodeLockButton
-        locked={data.locked}
-        disabled={!populated}
-        disabledTitle="Upload a still before locking"
-        lockedTitle="Locked — reuse last run output on the next Run"
-        unlockedTitle="Unlocked — always emit the uploaded still on Run"
-        variant="card"
-        onToggle={(locked) => updateNodeData(id, { ...data, locked })}
-      />
-      <div className="mb-2 flex items-start justify-between gap-2 pr-9">
-        <div className="min-w-0">
-          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Image (literal)
-          </div>
-          <p className="mt-0.5 text-[9px] text-muted-foreground">
-            Fixed still — Run passes only this upload downstream (no upstream image merge).
-          </p>
-        </div>
-        <Handle
-          type="source"
-          position={Position.Right}
-          id="image"
-          style={{ top: "50%" }}
-          className="!right-[-6px] !h-3 !w-3 !border-2 !border-card !bg-sky-500"
-        />
-      </div>
-      <label className="mb-1 block text-[10px] font-medium text-muted-foreground">Prompt</label>
-      <textarea
-        className="nodrag nopan nowheel mb-2 h-10 w-full resize-none rounded-md border border-border bg-muted px-2 py-1 text-xs text-foreground outline-none"
-        placeholder="What to use this still for (wardrobe ref, face, location…)"
-        value={data.prompt}
-        onChange={(e) => updateNodeData(id, { ...data, prompt: e.target.value })}
-      />
-      <label className="mb-1 block text-[10px] font-medium text-muted-foreground">Label</label>
-      <input
-        className="mb-2 w-full rounded-md border border-border bg-muted px-2 py-1 text-xs text-foreground outline-none"
-        value={data.label}
-        onChange={(e) => updateNodeData(id, { ...data, label: e.target.value })}
-      />
-      <label className="mb-1 block text-[10px] font-medium text-muted-foreground">Upload still</label>
       <input
         type="file"
         accept="image/*"

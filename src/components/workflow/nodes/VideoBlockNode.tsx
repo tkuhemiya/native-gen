@@ -10,6 +10,7 @@ import {
 import type { AppNode } from "@/lib/workflow/app-node";
 import {
   VIDEO_ASPECT_RATIOS,
+  VIDEO_DURATION_MIN_SEC,
   VIDEO_DURATION_SECONDS,
   VIDEO_RESOLUTIONS,
   clampVideoDurationSec,
@@ -44,27 +45,32 @@ export function VideoBlockNode(props: NodeProps<AppNode>) {
   const { activeNodeId, phase } = useWorkflowRunContext();
   const runningHere = phase === "running" && activeNodeId === id;
 
-  if (data.kind !== "videoBlock") return null;
+  const isVideoBlock = data.kind === "videoBlock";
 
-  const resolutionSafe: VideoResolution = (
-    VIDEO_RESOLUTIONS as readonly string[]
-  ).includes(data.resolution)
-    ? data.resolution
-    : "720p";
+  const resolutionSafe: VideoResolution =
+    isVideoBlock && (VIDEO_RESOLUTIONS as readonly string[]).includes(data.resolution)
+      ? data.resolution
+      : "720p";
+
+  const durationSafe = isVideoBlock
+    ? clampVideoDurationSec(data.durationSec)
+    : VIDEO_DURATION_MIN_SEC;
 
   useEffect(() => {
+    if (!isVideoBlock) return;
     if (resolutionSafe !== data.resolution) {
       updateNodeData(id, { ...data, resolution: resolutionSafe });
     }
-  }, [data, id, resolutionSafe, updateNodeData]);
-
-  const durationSafe = clampVideoDurationSec(data.durationSec);
+  }, [data, id, isVideoBlock, resolutionSafe, updateNodeData]);
 
   useEffect(() => {
+    if (!isVideoBlock) return;
     if (durationSafe !== data.durationSec) {
       updateNodeData(id, { ...data, durationSec: durationSafe });
     }
-  }, [data, id, durationSafe, updateNodeData]);
+  }, [data, durationSafe, id, isVideoBlock, updateNodeData]);
+
+  if (!isVideoBlock) return null;
 
   const videoReady = runOut?.type === "video" && !!runOut.url?.trim();
 

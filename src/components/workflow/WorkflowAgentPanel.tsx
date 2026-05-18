@@ -10,7 +10,7 @@ import {
   useState,
 } from "react";
 
-import type { MediaInputAsset, WorkflowDocument } from "@/lib/workflow/schema";
+import type { StoredImageAsset, WorkflowDocument } from "@/lib/workflow/schema";
 import type { WorkflowAgentStreamEvent } from "@/lib/workflow/workflow-agent";
 
 const MAX_COMPOSER_IMAGES = 8;
@@ -54,7 +54,7 @@ function downscaleImageDataUrl(dataUrl: string, maxDim: number): Promise<string>
   });
 }
 
-async function imageFileToComposerAsset(file: File): Promise<MediaInputAsset | null> {
+async function imageFileToComposerAsset(file: File): Promise<StoredImageAsset | null> {
   if (!file.type.startsWith("image/")) return null;
   const raw = await readFileAsDataUrl(file);
   const dataUrl = await downscaleImageDataUrl(raw, MAX_IMAGE_DIMENSION);
@@ -90,7 +90,7 @@ type ChatTurn = {
   id: string;
   role: "user" | "assistant";
   content: string;
-  images?: MediaInputAsset[];
+  images?: StoredImageAsset[];
 };
 
 function cid() {
@@ -256,7 +256,7 @@ export function WorkflowAgentPanel({
 }: WorkflowAgentPanelProps) {
   const [messages, setMessages] = useState<ChatTurn[]>([]);
   const [draft, setDraft] = useState("");
-  const [pendingComposerImages, setPendingComposerImages] = useState<MediaInputAsset[]>([]);
+  const [pendingComposerImages, setPendingComposerImages] = useState<StoredImageAsset[]>([]);
   const [busy, setBusy] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [lastAgentLog, setLastAgentLog] = useState<string[] | null>(null);
@@ -282,7 +282,7 @@ export function WorkflowAgentPanel({
 
   const appendComposerImages = useCallback(async (files: FileList | File[] | null | undefined) => {
     if (!files?.length) return;
-    const batch: MediaInputAsset[] = [];
+    const batch: StoredImageAsset[] = [];
     for (const file of Array.from(files)) {
       const asset = await imageFileToComposerAsset(file);
       if (asset) batch.push(asset);

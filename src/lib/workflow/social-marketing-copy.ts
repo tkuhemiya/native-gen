@@ -18,7 +18,8 @@ function fallbackMarketingCopy(opts: {
 }
 
 /**
- * Social promo body + hashtags for platformExport text pins (when OPENAI_API_KEY is set).
+ * Social promo body + hashtags for static-image / campaign briefs when `OPENAI_API_KEY` is set.
+ * Callers use `POST /api/workflow/social-copy`; story workflows use `outputBlock` instead of legacy platform export nodes.
  */
 export async function generateMarketingSocialCopy(opts: {
   campaignBrief: string;

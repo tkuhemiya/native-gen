@@ -320,7 +320,6 @@ async function assembleClipsWithBridgeHandling(
 ): Promise<string> {
   let current = normalizeJoinTransitions(clips.length, transitions);
 
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     let res: Response;
     try {
@@ -474,39 +473,15 @@ export async function runWorkflowDAG(
           });
           break;
         }
-        const upstream = collectUpstreamText(id, incomingByTarget, outputs);
-        const chunks = [upstream, data.prompt.trim(), data.value.trim()].filter(Boolean);
-        const value = chunks.join("\n\n").trim() || data.value.trim();
-        outputs[id] = { type: "text", value };
-        onNodeComplete?.({
-          nodeId: id,
-          index: step + 1,
-          total: totalSteps,
-          label,
-          output: outputs[id],
-        });
-        break;
-      }
-      case "textLiteral": {
-        if (
-          data.locked &&
-          reuseOutputs &&
-          reuseOutputs[id]?.type === "text" &&
-          reuseOutputs[id].value.trim()
-        ) {
-          const cached = reuseOutputs[id];
-          outputs[id] = cached;
-          onNodeComplete?.({
-            nodeId: id,
-            index: step + 1,
-            total: totalSteps,
-            label,
-            output: cached,
-            reused: true,
-          });
-          break;
+        let value: string;
+        if (data.locked) {
+          const chunks = [data.prompt.trim(), data.value.trim()].filter(Boolean);
+          value = chunks.join("\n\n").trim() || data.value.trim();
+        } else {
+          const upstream = collectUpstreamText(id, incomingByTarget, outputs);
+          const chunks = [upstream, data.prompt.trim(), data.value.trim()].filter(Boolean);
+          value = chunks.join("\n\n").trim() || data.value.trim();
         }
-        const value = data.value.trim();
         outputs[id] = { type: "text", value };
         onNodeComplete?.({
           nodeId: id,
@@ -534,44 +509,28 @@ export async function runWorkflowDAG(
             break;
           }
         }
+        if (data.locked) {
+          const url = localUrl && localUrl.trim();
+          if (!url) {
+            throw new GraphError(
+              `Image primitive “${label}” is locked and needs an uploaded still (upstream image merge is disabled)`,
+            );
+          }
+          outputs[id] = { type: "image", url: url.trim() };
+          onNodeComplete?.({
+            nodeId: id,
+            index: step + 1,
+            total: totalSteps,
+            label,
+            output: outputs[id],
+          });
+          break;
+        }
         const upstreamUrls = collectUpstreamImageUrls(id, incomingByTarget, outputs);
         const url = (localUrl && localUrl.trim()) || upstreamUrls[0];
         if (!url?.trim()) {
           throw new GraphError(
             `Image primitive “${label}” needs an uploaded still or an upstream generated image wired to its image pin`,
-          );
-        }
-        outputs[id] = { type: "image", url: url.trim() };
-        onNodeComplete?.({
-          nodeId: id,
-          index: step + 1,
-          total: totalSteps,
-          label,
-          output: outputs[id],
-        });
-        break;
-      }
-      case "imageLiteral": {
-        const localUrl = data.image?.dataUrl;
-        if (data.locked && reuseOutputs && reuseOutputs[id]?.type === "image") {
-          const cached = reuseOutputs[id];
-          if (cached.url?.trim()) {
-            outputs[id] = cached;
-            onNodeComplete?.({
-              nodeId: id,
-              index: step + 1,
-              total: totalSteps,
-              label,
-              output: cached,
-              reused: true,
-            });
-            break;
-          }
-        }
-        const url = localUrl && localUrl.trim();
-        if (!url) {
-          throw new GraphError(
-            `Image literal “${label}” needs an uploaded still (this node does not inherit upstream images)`,
           );
         }
         outputs[id] = { type: "image", url: url.trim() };

@@ -29,12 +29,10 @@ import {
 } from "@/components/workflow/WorkflowRunContext";
 import { GenerationBlockNode } from "@/components/workflow/nodes/GenerationBlockNode";
 import {
-  ImageLiteralNode,
   ImagePrimitiveNode,
   OutputBlockNode,
   SceneComposeNode,
   SceneJoinNode,
-  TextLiteralNode,
   TextPrimitiveNode,
 } from "@/components/workflow/nodes/StoryNodes";
 import { VideoBlockNode } from "@/components/workflow/nodes/VideoBlockNode";
@@ -74,9 +72,7 @@ import { estimateWorkflowFalUsd } from "@/lib/workflow/estimate-workflow-fal-usd
 
 const nodeTypes = {
   textPrimitive: TextPrimitiveNode,
-  textLiteral: TextLiteralNode,
   imagePrimitive: ImagePrimitiveNode,
-  imageLiteral: ImageLiteralNode,
   sceneCompose: SceneComposeNode,
   sceneJoin: SceneJoinNode,
   generationBlock: GenerationBlockNode,

@@ -1,7 +1,7 @@
 import { falFluxPresetSizeSchema } from "@/lib/fal/text-to-image-config";
 import { z } from "zod";
 
-export const WORKFLOW_DOCUMENT_VERSION = 9 as const;
+export const WORKFLOW_DOCUMENT_VERSION = 10 as const;
 
 const mediaAssetSchema = z.object({
   dataUrl: z.string(),
@@ -9,8 +9,6 @@ const mediaAssetSchema = z.object({
 });
 
 export type StoredImageAsset = z.infer<typeof mediaAssetSchema>;
-/** @deprecated name — composer still uses “media” language; wraps a single hosted data URL. */
-export type MediaInputAsset = StoredImageAsset;
 
 const positionSchema = z.object({
   x: z.number(),
@@ -65,29 +63,11 @@ export const nodeDataSchema = z.discriminatedUnion("kind", [
     locked: z.boolean(),
   }),
   z.object({
-    kind: z.literal("textLiteral"),
-    label: z.string(),
-    /** UX tag only (same as textPrimitive); does not change runner semantics. */
-    purpose: z.string(),
-    /** Exact copy passed downstream on Run — no upstream merge, no prompt field. */
-    value: z.string(),
-    locked: z.boolean(),
-  }),
-  z.object({
     kind: z.literal("imagePrimitive"),
     label: z.string(),
-    /** Authoring note for this still — not merged into gen/video prompts; use textPrimitive / textLiteral wired to gen for canon prose. */
+    /** Authoring note for this still — not merged into gen/video prompts; use textPrimitive wired to gen for canon prose. */
     prompt: z.string(),
     /** Optional local photo — otherwise rely on upstream image wires after generation. */
-    image: mediaAssetSchema.optional(),
-    locked: z.boolean(),
-  }),
-  z.object({
-    kind: z.literal("imageLiteral"),
-    label: z.string(),
-    /** Describe what to use this still for (authoring only — not merged into gen/video prompts by the runner). */
-    prompt: z.string(),
-    /** Uploaded still only — Run does not pull upstream images into this node. */
     image: mediaAssetSchema.optional(),
     locked: z.boolean(),
   }),
@@ -157,9 +137,7 @@ export type NodeData = z.infer<typeof nodeDataSchema>;
 
 export const NODE_TYPES = [
   "textPrimitive",
-  "textLiteral",
   "imagePrimitive",
-  "imageLiteral",
   "sceneCompose",
   "sceneJoin",
   "generationBlock",
@@ -180,25 +158,10 @@ export function defaultNodeData(type: CanvasNodeType): NodeData {
         value: "",
         locked: false,
       };
-    case "textLiteral":
-      return {
-        kind: "textLiteral",
-        label: "Text (literal)",
-        purpose: "",
-        value: "",
-        locked: false,
-      };
     case "imagePrimitive":
       return {
         kind: "imagePrimitive",
         label: "Image",
-        prompt: "",
-        locked: false,
-      };
-    case "imageLiteral":
-      return {
-        kind: "imageLiteral",
-        label: "Image (literal)",
         prompt: "",
         locked: false,
       };

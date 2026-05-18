@@ -10,14 +10,13 @@ import {
   getFalTextToImageEndpointId,
 } from "@/lib/fal/text-to-image-config";
 import { getFalImageToVideoEndpointId } from "@/lib/fal/video-config";
-import { assertConnectedDAG, GraphError } from "./graph";
+import { assertConnectedDAG, buildIncomingByTarget, GraphError } from "./graph";
 import {
   incomingMediaLanes,
   outgoingMediaLanes,
   planGeneration,
 } from "./generation-plan";
 import type { WorkflowDocument } from "./schema";
-import { buildIncomingByTarget } from "./workflow-plan";
 
 export type FalCostLineCall = {
   intent: string;

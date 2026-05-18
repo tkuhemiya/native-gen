@@ -1,6 +1,7 @@
 import {
   assertConnectedDAG,
   assertSceneJoinClipWiring,
+  buildIncomingByTarget,
   GraphError,
 } from "./graph";
 import {
@@ -14,11 +15,10 @@ import { reconcileGenerationImageSizes } from "./platform-aspect-presets";
 import {
   WORKFLOW_DOCUMENT_VERSION,
   workflowDocumentSchema,
-  type MediaInputAsset,
+  type StoredImageAsset,
   type WorkflowDocument,
   type WorkflowNode,
 } from "./schema";
-import { buildIncomingByTarget } from "./workflow-plan";
 import type { ZodError } from "zod";
 
 function linesFromZodError(err: ZodError): string[] {
@@ -39,7 +39,7 @@ export function stripWorkflowMediaForAgent(doc: WorkflowDocument): WorkflowDocum
   return {
     ...doc,
     nodes: doc.nodes.map((n) => {
-      if (n.data.kind !== "imagePrimitive" && n.data.kind !== "imageLiteral") return n;
+      if (n.data.kind !== "imagePrimitive") return n;
       return {
         ...n,
         data: { ...n.data, image: undefined },
@@ -56,9 +56,9 @@ export function mergePreservedMediaFromPrevious(
   if (!previous) return doc;
   const prevById = new Map(previous.nodes.map((n) => [n.id, n]));
   const nodes: WorkflowNode[] = doc.nodes.map((n) => {
-    if (n.data.kind !== "imagePrimitive" && n.data.kind !== "imageLiteral") return n;
+    if (n.data.kind !== "imagePrimitive") return n;
     const prev = prevById.get(n.id);
-    if (!prev || (prev.data.kind !== "imagePrimitive" && prev.data.kind !== "imageLiteral")) return n;
+    if (!prev || prev.data.kind !== "imagePrimitive") return n;
     const emptyNew = !n.data.image?.dataUrl;
     const hadPrev = !!prev.data.image?.dataUrl;
     if (emptyNew && hadPrev && prev.data.image) {
@@ -76,11 +76,11 @@ export function mergePreservedMediaFromPrevious(
 }
 
 /**
- * Fills composer-attached stills into the first available `imagePrimitive` / `imageLiteral` slots (one image per node).
+ * Fills composer-attached stills into the first available `imagePrimitive` slots (one image per node).
  */
 export function mergeComposerImagesIntoPrimaryImagePrimitive(
   doc: WorkflowDocument,
-  assets: MediaInputAsset[],
+  assets: StoredImageAsset[],
 ): WorkflowDocument {
   const safe = assets.filter(
     (a) => typeof a.dataUrl === "string" && a.dataUrl.startsWith("data:image/"),
@@ -89,7 +89,7 @@ export function mergeComposerImagesIntoPrimaryImagePrimitive(
 
   let idx = 0;
   const nodes = doc.nodes.map((n) => {
-    if ((n.data.kind !== "imagePrimitive" && n.data.kind !== "imageLiteral") || idx >= safe.length)
+    if (n.data.kind !== "imagePrimitive" || idx >= safe.length)
       return n;
     if (n.data.image?.dataUrl) return n;
     const a = safe[idx]!;

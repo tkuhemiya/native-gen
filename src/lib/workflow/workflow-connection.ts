@@ -14,11 +14,11 @@ export function sourceMediaLane(
     if (sourceHandle === "video") return "video";
     return "wildcard";
   }
-  if (sourceType === "textPrimitive" || sourceType === "textLiteral") {
+  if (sourceType === "textPrimitive") {
     if (sourceHandle === "text") return "text";
     return "wildcard";
   }
-  if (sourceType === "imagePrimitive" || sourceType === "imageLiteral") {
+  if (sourceType === "imagePrimitive") {
     if (sourceHandle === "image") return "image";
     return "wildcard";
   }
@@ -52,15 +52,9 @@ function targetMediaLane(
     if (targetHandle === "text" || targetHandle == null) return "text";
     return null;
   }
-  if (targetType === "textLiteral") {
-    return null;
-  }
   if (targetType === "imagePrimitive") {
     if (targetHandle === "text") return "text";
     if (targetHandle === "image") return "image";
-    return null;
-  }
-  if (targetType === "imageLiteral") {
     return null;
   }
   if (targetType === "sceneCompose") {

@@ -7,7 +7,7 @@ import {
   useReactFlow,
   type NodeProps,
 } from "@xyflow/react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import {
   useNodeRunOutput,
   useWorkflowRunContext,
@@ -39,7 +39,7 @@ const STEPS_TOOLTIP =
 const SUMMARY_CLS =
   "nodrag nopan cursor-pointer select-none list-none px-2 py-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground [&::-webkit-details-marker]:hidden";
 
-/** Controlled details — resets expansion when wiring changes (`shouldExpand`). */
+/** Controlled details — call site may use `key` so expansion resets when `shouldExpand` identity changes. */
 function CollapsibleSection({
   shouldExpand,
   className,
@@ -54,9 +54,6 @@ function CollapsibleSection({
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(shouldExpand);
-  useEffect(() => {
-    setOpen(shouldExpand);
-  }, [shouldExpand]);
 
   return (
     <details
@@ -168,6 +165,7 @@ export function GenerationBlockNode(props: NodeProps<AppNode>) {
             onChange={(e) => updateNodeData(id, { ...data, suffix: e.target.value })}
           />
           <CollapsibleSection
+            key={openImageSection ? "expand" : "collapse"}
             shouldExpand={openImageSection}
             className="mt-2 rounded-md border border-border bg-muted/20 open:bg-muted/35"
             summaryClassName={SUMMARY_CLS}

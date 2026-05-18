@@ -147,6 +147,17 @@ export function topologicalOrderPreferLeft(
   return ordered;
 }
 
+/** Incoming edges keyed by target node id (order preserved: first occurrence appends). */
+export function buildIncomingByTarget(edges: WorkflowEdge[]): Map<string, WorkflowEdge[]> {
+  const m = new Map<string, WorkflowEdge[]>();
+  for (const e of edges) {
+    const list = m.get(e.target) ?? [];
+    list.push(e);
+    m.set(e.target, list);
+  }
+  return m;
+}
+
 /**
  * Clip → join edges in stable order: order of appearance in `edges` (migration + user wiring order).
  */

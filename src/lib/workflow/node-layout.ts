@@ -6,23 +6,19 @@ import {
 } from "@/lib/workflow/story-node-role";
 
 type TextStoryWorkflowNode = WorkflowNode & {
-  data:
-    | Extract<WorkflowNode["data"], { kind: "textPrimitive" }>
-    | Extract<WorkflowNode["data"], { kind: "textLiteral" }>;
+  data: Extract<WorkflowNode["data"], { kind: "textPrimitive" }>;
 };
 
 type ImageStoryWorkflowNode = WorkflowNode & {
-  data:
-    | Extract<WorkflowNode["data"], { kind: "imagePrimitive" }>
-    | Extract<WorkflowNode["data"], { kind: "imageLiteral" }>;
+  data: Extract<WorkflowNode["data"], { kind: "imagePrimitive" }>;
 };
 
 function isStoryImageNode(n: WorkflowNode): n is ImageStoryWorkflowNode {
-  return n.data.kind === "imagePrimitive" || n.data.kind === "imageLiteral";
+  return n.data.kind === "imagePrimitive";
 }
 
 function isStoryTextNode(n: WorkflowNode): n is TextStoryWorkflowNode {
-  return n.data.kind === "textPrimitive" || n.data.kind === "textLiteral";
+  return n.data.kind === "textPrimitive";
 }
 
 /**
@@ -30,9 +26,7 @@ function isStoryTextNode(n: WorkflowNode): n is TextStoryWorkflowNode {
  */
 export const NODE_ANCHOR: Record<CanvasNodeType, { w: number; h: number }> = {
   textPrimitive: { w: 280, h: 260 },
-  textLiteral: { w: 280, h: 210 },
   imagePrimitive: { w: 280, h: 280 },
-  imageLiteral: { w: 280, h: 270 },
   sceneCompose: { w: 300, h: 220 },
   sceneJoin: { w: 320, h: 320 },
   generationBlock: { w: 340, h: 340 },
@@ -49,9 +43,7 @@ function anchorForNode(node: WorkflowNode): { w: number; h: number } {
   const t = node.type;
   if (
     t === "textPrimitive" ||
-    t === "textLiteral" ||
     t === "imagePrimitive" ||
-    t === "imageLiteral" ||
     t === "sceneCompose" ||
     t === "sceneJoin" ||
     t === "generationBlock" ||
@@ -93,7 +85,7 @@ function isTextToGenTextPin(e: WorkflowEdge, nById: Map<string, WorkflowNode>): 
   const tgt = nById.get(e.target);
   if (!src || !tgt) return false;
   if (tgt.data.kind !== "generationBlock") return false;
-  if (src.data.kind !== "textPrimitive" && src.data.kind !== "textLiteral") return false;
+  if (src.data.kind !== "textPrimitive") return false;
   const th = e.targetHandle;
   return th === "text" || th === null || th === undefined;
 }
@@ -103,7 +95,7 @@ function isImageToGenRefPin(e: WorkflowEdge, nById: Map<string, WorkflowNode>): 
   const tgt = nById.get(e.target);
   if (!src || !tgt) return false;
   if (tgt.data.kind !== "generationBlock") return false;
-  if (src.data.kind !== "imagePrimitive" && src.data.kind !== "imageLiteral") return false;
+  if (src.data.kind !== "imagePrimitive") return false;
   const th = e.targetHandle;
   return th === "image" || th === null || th === undefined;
 }

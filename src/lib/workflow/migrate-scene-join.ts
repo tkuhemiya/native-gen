@@ -1,4 +1,4 @@
-import type { WorkflowEdge } from "./schema";
+import { parseWorkflowEdgesLoose } from "./workflow-edge-parse";
 
 function sanitizeSceneJoinTransitions(raw: unknown): { mode: "cut" | "bridge"; bridgePrompt?: string }[] {
   if (!Array.isArray(raw)) return [];
@@ -29,24 +29,7 @@ export function migrateSceneJoinClipListToEdges(raw: unknown): unknown {
     if (id) nodeById.set(id, n);
   }
 
-  let edges: WorkflowEdge[] = [];
-  const rawEdges = doc.edges;
-  if (Array.isArray(rawEdges)) {
-    edges = rawEdges
-      .filter((e) => e !== null && typeof e === "object")
-      .map((e) => {
-        const edge = e as Record<string, unknown>;
-        return {
-          id: String(edge.id ?? crypto.randomUUID()),
-          source: String(edge.source),
-          target: String(edge.target),
-          sourceHandle:
-            edge.sourceHandle === undefined ? undefined : (edge.sourceHandle as string | null),
-          targetHandle:
-            edge.targetHandle === undefined ? undefined : (edge.targetHandle as string | null),
-        };
-      });
-  }
+  const edges = parseWorkflowEdgesLoose(doc.edges);
 
   const edgeDup = new Set(
     edges.map((e) => `${e.source}|${e.target}|${e.sourceHandle ?? ""}|${e.targetHandle ?? ""}`),

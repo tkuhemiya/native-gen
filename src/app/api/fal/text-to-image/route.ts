@@ -5,7 +5,6 @@ import { z } from "zod";
 import {
   assertSafeFalEndpointId,
   buildTextToImageQueueInput,
-  DEFAULT_FAL_TEXT_TO_IMAGE_MODEL,
   extractFalImagesUrl,
   falFluxPresetSizeSchema,
   getFalTextToImageEndpointId,
@@ -19,8 +18,7 @@ const bodySchema = z.object({
 });
 
 /**
- * Text → image via fal. Payload shape depends on `FAL_TEXT_TO_IMAGE_MODEL`
- * (default {@link DEFAULT_FAL_TEXT_TO_IMAGE_MODEL}).
+ * Text → image via fal; payload shape depends on `getFalTextToImageEndpointId()` / `FAL_TEXT_TO_IMAGE_MODEL`.
  */
 export async function POST(req: Request) {
   if (!process.env.FAL_KEY) {

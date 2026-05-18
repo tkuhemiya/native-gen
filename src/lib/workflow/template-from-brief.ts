@@ -19,7 +19,7 @@ export function buildTemplateWorkflowDocument(brief: string): WorkflowDocument {
   };
 
   const textId = crypto.randomUUID();
-  const fluxId = crypto.randomUUID();
+  const genBlockId = crypto.randomUUID();
   const exportId = crypto.randomUUID();
 
   const seed = defaultNodeData("textPrimitive") as Extract<NodeData, { kind: "textPrimitive" }>;
@@ -35,7 +35,7 @@ export function buildTemplateWorkflowDocument(brief: string): WorkflowDocument {
       },
     },
     {
-      id: fluxId,
+      id: genBlockId,
       type: "generationBlock",
       position: { x: 340, y: 0 },
       data: genData,
@@ -53,15 +53,15 @@ export function buildTemplateWorkflowDocument(brief: string): WorkflowDocument {
 
   const edges: WorkflowDocument["edges"] = [
     {
-      id: `e-${textId}-${fluxId}`,
+      id: `e-${textId}-${genBlockId}`,
       source: textId,
-      target: fluxId,
+      target: genBlockId,
       sourceHandle: "text",
       targetHandle: "text",
     },
     {
-      id: `e-${fluxId}-${exportId}`,
-      source: fluxId,
+      id: `e-${genBlockId}-${exportId}`,
+      source: genBlockId,
       target: exportId,
       sourceHandle: "image",
       targetHandle: "media",

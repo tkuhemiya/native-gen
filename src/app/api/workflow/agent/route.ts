@@ -3,8 +3,7 @@ import { z } from "zod";
 
 import { buildTemplateWorkflowDocument } from "@/lib/workflow/template-from-brief";
 import { normalizeWorkflowDocument } from "@/lib/workflow/migrate";
-import { workflowDocumentSchema } from "@/lib/workflow/schema";
-import type { WorkflowDocument } from "@/lib/workflow/schema";
+import { workflowDocumentSchema, type WorkflowDocument } from "@/lib/workflow/schema";
 import { mergeComposerImagesIntoPrimaryImagePrimitive } from "@/lib/workflow/workflow-canvas-agent";
 import {
   generateWorkflowWithOpenAI,
@@ -28,7 +27,7 @@ const bodySchema = z
     messages: z.array(messageSchema).min(1).max(30).optional(),
     /** Images from the sidebar composer — merged into available image primitives after workflow apply. */
     composerImages: z.array(composerImageSchema).max(8).optional(),
-    /** Current canvas so the agent can read/edit incrementally (full WorkflowDocument v3). */
+    /** Current canvas so the agent can read/edit incrementally (must match schema `WORKFLOW_DOCUMENT_VERSION`). */
     workflow: z.unknown().optional(),
     /** When true (OpenAI path only), respond with NDJSON stream + final `result` line. */
     stream: z.boolean().optional(),
