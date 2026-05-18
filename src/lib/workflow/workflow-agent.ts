@@ -21,7 +21,7 @@ const workflowJsonInputSchema = z.object({
     .string()
     .min(4)
     .describe(
-      `Full WorkflowDocument JSON: id, name, version (${WORKFLOW_DOCUMENT_VERSION}), updatedAt, nodes[], edges[]. Follow the **story primitive hierarchy** in the system prompt: primitives **fan in** to higher layers; **everything flows downstream** to a terminal **\`outputBlock\`** (still and/or clip path) unless the user explicitly asks for a non-runnable outline. **Script + storyboard (Layer 5) must feed Layer 6** before final renders. Graph checks are **structural only** (DAG, legal pins, schema). **\`textLiteral\`** = locked script; **\`imageLiteral\`** = fixed ref stills. **\`videoBlock\`**: beat on green **\`text\`**, **\`motionPrompt\`** = camera/motion.`,
+      `Full WorkflowDocument JSON: id, name, version (${WORKFLOW_DOCUMENT_VERSION}), updatedAt, nodes[], edges[]. Follow the **story primitive hierarchy** in the system prompt: primitives **fan in** to higher layers; **everything flows downstream** to a terminal **\`outputBlock\`** (still and/or clip path) unless the user explicitly asks for a non-runnable outline. **Script + storyboard (Layer 5) must feed Layer 6** before final renders. Prefer **lower-cost** gen settings when the brief allows (see system prompt **Cost / generation discipline**). Graph checks are **structural only** (DAG, legal pins, schema). **\`textLiteral\`** = locked script; **\`imageLiteral\`** = fixed ref stills. **\`videoBlock\`**: beat on green **\`text\`**, **\`motionPrompt\`** = camera/motion.`,
     ),
 });
 
@@ -64,6 +64,11 @@ Stories are built from **layered primitives**. Higher layers are **semantically 
 - **fal image→video** on \`videoBlock\` (default \`fal-ai/wan/v2.7/image-to-video\`; override \`FAL_IMAGE_TO_VIDEO_MODEL\`). **Do not** use **video** as reference into another video block — **no video→video** conditioning.
 - **Scene join assembly** (server): **\`cut\`** gaps concatenate with **ffmpeg**; **\`bridge\`** gaps are **unsupported** (Run will surface a hard cut vs abort choice — prefer \`cut\` in authored JSON unless the user insists).
 - Optional **social-copy** API may still exist; the **default story path** is **full stack → \`outputBlock\`** (stills and/or clips), not multi-platform publishing.
+
+**Cost / generation discipline** — Actively **lower fal / GPU cost** when the user does **not** demand maximum fidelity. **Do not** break the story hierarchy or coherency to save money.
+- **\`generationBlock\`**: prefer **fewer** separate still passes when one hero still + ref **edit** suffices; reuse **\`suffix\`**; for **Flux Schnell** (\`FAL_TEXT_TO_IMAGE_MODEL\`), **\`numInferenceSteps\`** drives cost — default **low (e.g. 2–4)** and raise **only** when the user asks for higher quality (max 12). For **GPT Image 2** / **mini**, **steps do not apply** (ignored server-side).
+- **\`videoBlock\`**: prefer **shorter \`durationSec\`**, **\`720p\`** instead of **\`1080p\`**, and **fewer clips** when motion is optional; only **\`sceneJoin\`** when multiple clips are needed.
+- **Avoid** redundant gens (same beat twice); **reuse node ids** and **\`locked\`** nodes when the user iterates so runs do not re-buy unchanged frames.
 
 **Use \`textLiteral\`** for verbatim canon/script lines that must **not** merge upstream on Run; **\`imageLiteral\`** for ref stills that must **not** inherit upstream pixels. When a node must not drift on Run, set **\`locked: true\`** (Lore Bible, script, ref stills, finished renders). Reserve a **single mega \`textPrimitive\` seed** only when the user asks for a **minimal** draft.
 
@@ -472,7 +477,7 @@ export async function generateWorkflowWithOpenAI(
 
     const writeWorkflowCanvasTool = tool({
       description:
-        "Apply the full WorkflowDocument JSON. Obey the **story primitive hierarchy**: **fan-in** from Lore/Plot/Characters/Places into scenes and script; **connect the full stack** through Layer 6 to **\`outputBlock\`** — no orphan planning text. **Script/storyboard (Layer 5) feeds production \`generationBlock\` / \`videoBlock\`**. **\`textLiteral\`** for locked script; **\`imageLiteral\`** for fixed refs. **\`videoBlock\`**: narrative on **\`text\` in**, **\`motionPrompt\`** = camera/motion. **\`sceneJoin\`**: prefer **\`cut\`**. No video→video.",
+        "Apply the full WorkflowDocument JSON. Obey the **story primitive hierarchy**: **fan-in** from Lore/Plot/Characters/Places into scenes and script; **connect the full stack** through Layer 6 to **\`outputBlock\`** — no orphan planning text. **Prefer lower-cost generation** (fewer gens, lower Flux steps, 720p / shorter clips) when quality is not specified as premium — see system **Cost / generation discipline**. **Script/storyboard (Layer 5) feeds production \`generationBlock\` / \`videoBlock\`**. **\`textLiteral\`** for locked script; **\`imageLiteral\`** for fixed refs. **\`videoBlock\`**: narrative on **\`text\` in**, **\`motionPrompt\`** = camera/motion. **\`sceneJoin\`**: prefer **\`cut\`**. No video→video.",
       inputSchema: workflowJsonInputSchema,
       execute: async ({ workflowJson }) => {
         totalWriteAttempts += 1;
