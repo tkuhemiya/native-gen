@@ -1,0 +1,893 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Native Gen — Pitch Deck</title>
+    <style>
+      :root {
+        --bg: #0b0d12;
+        --bg-soft: #11141b;
+        --panel: #161a24;
+        --line: #232a39;
+        --text: #e7ecf3;
+        --muted: #98a2b3;
+        --accent: #7aa2ff;
+        --accent-2: #b693ff;
+        --good: #5bd6a4;
+        --warn: #f7b955;
+        --bad: #ff7b7b;
+        --code-bg: #0f131c;
+      }
+
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: var(--bg);
+        color: var(--text);
+        font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI",
+          Helvetica, Arial, sans-serif;
+        font-feature-settings: "ss01", "cv11";
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+        overflow: hidden;
+      }
+
+      a { color: var(--accent); }
+
+      /* deck layout */
+      .deck {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        padding: 32px;
+      }
+
+      .slide {
+        position: absolute;
+        inset: 0;
+        display: none;
+        place-items: center;
+        padding: 56px clamp(40px, 6vw, 88px);
+      }
+      .slide.active { display: grid; }
+
+      .frame {
+        width: min(1180px, 100%);
+        max-height: 100%;
+        background: linear-gradient(180deg, var(--panel), #11151e);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55),
+          inset 0 1px 0 rgba(255, 255, 255, 0.04);
+        padding: clamp(28px, 4vw, 56px);
+        overflow: auto;
+      }
+
+      .eyebrow {
+        font-size: 12px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--muted);
+        font-weight: 600;
+      }
+
+      h1.title {
+        font-size: clamp(40px, 6vw, 72px);
+        line-height: 1.02;
+        margin: 16px 0 14px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        background: linear-gradient(180deg, #ffffff, #c7d0e3);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+
+      h2 {
+        font-size: clamp(28px, 3.4vw, 44px);
+        line-height: 1.1;
+        margin: 14px 0 18px;
+        font-weight: 700;
+        letter-spacing: -0.015em;
+      }
+
+      h3 {
+        font-size: 18px;
+        margin: 0 0 6px;
+        color: var(--text);
+        font-weight: 600;
+      }
+
+      p, li {
+        font-size: clamp(15px, 1.35vw, 18px);
+        line-height: 1.55;
+        color: #cdd5e2;
+      }
+
+      .lead {
+        font-size: clamp(18px, 1.7vw, 24px);
+        line-height: 1.45;
+        color: #d7dde9;
+        max-width: 72ch;
+      }
+
+      .muted { color: var(--muted); }
+      .strong { color: #fff; font-weight: 600; }
+      .accent { color: var(--accent); }
+      .accent-2 { color: var(--accent-2); }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 12px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.02);
+        color: var(--muted);
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .pill .dot {
+        width: 6px; height: 6px; border-radius: 50%;
+        background: var(--good);
+        box-shadow: 0 0 0 3px rgba(91, 214, 164, 0.12);
+      }
+
+      .grid { display: grid; gap: clamp(16px, 1.6vw, 24px); }
+      .cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      @media (max-width: 780px) {
+        .cols-2, .cols-3, .cols-4 { grid-template-columns: 1fr; }
+      }
+
+      .card {
+        background: rgba(255, 255, 255, 0.02);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 18px 20px;
+      }
+
+      .card .num {
+        font-size: 12px;
+        color: var(--muted);
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        margin-bottom: 8px;
+        font-weight: 600;
+      }
+
+      ul.clean {
+        margin: 0; padding: 0; list-style: none;
+      }
+      ul.clean li {
+        position: relative;
+        padding-left: 22px;
+        margin: 10px 0;
+      }
+      ul.clean li::before {
+        content: "";
+        position: absolute;
+        left: 4px; top: 0.7em;
+        width: 8px; height: 8px;
+        border-radius: 2px;
+        background: linear-gradient(135deg, var(--accent), var(--accent-2));
+        transform: rotate(45deg);
+      }
+
+      code, .mono {
+        font-family: ui-monospace, SFMono-Regular, "JetBrains Mono",
+          Menlo, Consolas, monospace;
+        font-size: 0.92em;
+      }
+
+      pre.code {
+        background: var(--code-bg);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 14px 16px;
+        margin: 8px 0 0;
+        font-size: 13px;
+        line-height: 1.55;
+        color: #d6dbe7;
+        overflow: auto;
+        white-space: pre;
+      }
+
+      .tag {
+        display: inline-block;
+        font-size: 11px;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.02);
+        padding: 3px 8px;
+        border-radius: 999px;
+        margin-right: 6px;
+      }
+
+      .tag.good { color: var(--good); border-color: rgba(91, 214, 164, 0.3); }
+      .tag.warn { color: var(--warn); border-color: rgba(247, 185, 85, 0.3); }
+      .tag.bad  { color: var(--bad);  border-color: rgba(255, 123, 123, 0.3); }
+
+      .kbd {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 11px;
+        padding: 2px 6px;
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid var(--line);
+        color: var(--muted);
+      }
+
+      /* before / after columns */
+      .before-after { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: stretch; }
+      .before-after .card { display: flex; flex-direction: column; }
+      .before-after .card h3 { display: flex; align-items: center; gap: 8px; }
+      .before-after .card .tag { margin: 0; }
+      @media (max-width: 780px) { .before-after { grid-template-columns: 1fr; } }
+
+      /* footer / nav */
+      .chrome {
+        position: fixed;
+        left: 0; right: 0; bottom: 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 14px 22px;
+        font-size: 12px;
+        color: var(--muted);
+        pointer-events: none;
+        z-index: 5;
+      }
+      .chrome .brand { display: flex; align-items: center; gap: 10px; }
+      .brand-mark {
+        width: 18px; height: 18px;
+        border-radius: 5px;
+        background:
+          radial-gradient(circle at 30% 30%, var(--accent-2), transparent 60%),
+          linear-gradient(135deg, var(--accent), #2b3f7a);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+      }
+      .nav {
+        pointer-events: auto;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .nav button {
+        all: unset;
+        cursor: pointer;
+        font-size: 12px;
+        color: var(--muted);
+        padding: 6px 10px;
+        border-radius: 8px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.02);
+      }
+      .nav button:hover { color: var(--text); border-color: #3a4356; }
+      .progress {
+        flex: 1;
+        max-width: 200px;
+        height: 3px;
+        background: rgba(255, 255, 255, 0.06);
+        border-radius: 999px;
+        overflow: hidden;
+      }
+      .progress > span {
+        display: block;
+        height: 100%;
+        background: linear-gradient(90deg, var(--accent), var(--accent-2));
+        width: 0%;
+        transition: width 200ms ease;
+      }
+
+      .hint {
+        position: fixed;
+        top: 16px;
+        right: 18px;
+        font-size: 11px;
+        color: var(--muted);
+        opacity: 0.7;
+      }
+
+      /* "graph" diagram for the canvas slide */
+      .graph {
+        display: grid;
+        grid-template-columns: 1fr 56px 1.15fr 56px 1fr;
+        gap: 14px;
+        align-items: center;
+        margin-top: 6px;
+      }
+      @media (max-width: 880px) {
+        .graph {
+          grid-template-columns: 1fr;
+          gap: 10px;
+        }
+        .graph .arrow { display: none; }
+      }
+      .node {
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 12px 14px;
+        position: relative;
+      }
+      .node .ntitle {
+        font-size: 11px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--muted);
+        font-weight: 600;
+      }
+      .node .nbody {
+        margin-top: 6px;
+        font-size: 14px;
+        line-height: 1.4;
+      }
+      .node.media   { border-color: rgba(122, 162, 255, 0.35); }
+      .node.gen     { border-color: rgba(182, 147, 255, 0.35); }
+      .node.video   { border-color: rgba(247, 185, 85, 0.35); }
+      .node.export  { border-color: rgba(91, 214, 164, 0.35); }
+      .arrow {
+        height: 1px;
+        background: linear-gradient(90deg, transparent, var(--line), transparent);
+        position: relative;
+      }
+      .arrow::after {
+        content: "";
+        position: absolute;
+        right: -1px; top: -3px;
+        width: 0; height: 0;
+        border-left: 6px solid var(--line);
+        border-top: 4px solid transparent;
+        border-bottom: 4px solid transparent;
+      }
+      .exports {
+        display: grid;
+        gap: 8px;
+      }
+
+      /* "feature table" simple grid */
+      .row {
+        display: grid;
+        grid-template-columns: 220px 1fr;
+        gap: 16px;
+        padding: 12px 0;
+        border-bottom: 1px dashed var(--line);
+      }
+      .row:last-child { border-bottom: 0; }
+      .row .k { color: var(--text); font-weight: 600; }
+      .row .v { color: #c7cfdc; }
+
+      .footnote {
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: 14px;
+      }
+
+      /* title slide */
+      .title-frame { width: min(1280px, 100%); }
+      .title-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+        gap: clamp(24px, 3vw, 44px);
+        align-items: center;
+      }
+      @media (max-width: 980px) {
+        .title-grid { grid-template-columns: 1fr; }
+        .hero-shot { order: -1; }
+      }
+      .hero-shot {
+        margin: 0;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        overflow: hidden;
+        background: #0a0d14;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45),
+          inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+      }
+      .hero-shot img {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+      .hero-shot figcaption {
+        padding: 10px 14px;
+        font-size: 12px;
+        color: var(--muted);
+        border-top: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.02);
+      }
+      /* closing slide */
+      .closing-frame {
+        text-align: center;
+        background:
+          radial-gradient(1100px 500px at 50% -10%, rgba(122, 162, 255, 0.10), transparent 60%),
+          radial-gradient(900px 500px at 50% 110%, rgba(182, 147, 255, 0.10), transparent 60%),
+          linear-gradient(180deg, var(--panel), #11151e);
+      }
+      .closing-title {
+        font-size: clamp(44px, 6.2vw, 78px);
+        line-height: 1.04;
+        margin: 18px auto 36px;
+        font-weight: 700;
+        letter-spacing: -0.025em;
+        max-width: 18ch;
+        background: linear-gradient(180deg, #ffffff, #c7d0e3);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+      .closing-beats {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: clamp(16px, 1.8vw, 26px);
+        margin: 0 auto;
+        max-width: 1000px;
+        text-align: left;
+      }
+      @media (max-width: 780px) {
+        .closing-beats { grid-template-columns: 1fr; }
+      }
+      .beat {
+        background: rgba(255, 255, 255, 0.02);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 18px 20px;
+      }
+      .beat-num {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px;
+        color: var(--muted);
+        letter-spacing: 0.14em;
+        margin-bottom: 8px;
+      }
+      .beat p { margin: 0; font-size: clamp(14px, 1.25vw, 16px); }
+      .closing-kicker {
+        margin-top: clamp(28px, 4vw, 48px);
+        font-size: clamp(16px, 1.5vw, 20px);
+        letter-spacing: 0.02em;
+        color: #d7dde9;
+        font-weight: 600;
+      }
+
+      .titleblock { max-width: 940px; }
+      .titleblock .tagline {
+        font-size: clamp(20px, 2.1vw, 28px);
+        margin: 4px 0 0;
+        color: #d7dde9;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+      .titleblock .sub {
+        font-size: clamp(18px, 1.7vw, 22px);
+        color: #c7cfdc;
+        margin-top: 18px;
+        line-height: 1.45;
+      }
+      .meta-line {
+        margin-top: 28px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        flex-wrap: wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="hint">
+      <span class="kbd">←</span> <span class="kbd">→</span> /
+      <span class="kbd">Space</span> · <span class="kbd">F</span> fullscreen
+    </div>
+
+    <main class="deck" id="deck">
+      <!-- 1. TITLE -->
+      <section class="slide active">
+        <div class="frame title-frame">
+          <div class="title-grid">
+            <div class="titleblock">
+              <span class="pill"><span class="dot"></span> Buildathon · Native Gen</span>
+              <h1 class="title">A canvas where AI builds the workflow,<br />and the workflow makes the posts.</h1>
+              <p class="tagline"><span class="accent">Cursor</span> — for marketing.</p>
+              <p class="sub">
+                Native Gen is a visual node graph for social creative. You brief
+                the agent in natural language; it reads and rewrites the canvas
+                JSON; the runner generates images & video and publishes to
+                YouTube and Meta — or hands you a clean export bundle.
+              </p>
+              <div class="meta-line">
+                <span class="tag">Next.js</span>
+                <span class="tag">React Flow</span>
+                <span class="tag">Vercel AI SDK + OpenAI</span>
+                <span class="tag">fal.ai</span>
+                <span class="tag">Google · Meta OAuth</span>
+              </div>
+            </div>
+
+            <figure class="hero-shot">
+              <img src="canvas.png" alt="Native Gen canvas — a workflow graph going from a brief node through a generation block and video block out to YouTube, Instagram, Facebook, and TikTok exports." />
+              <figcaption>A real run · "Northstar Cold Brew campaign" → 4 platforms.</figcaption>
+            </figure>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2. WHAT WE BUILT -->
+      <section class="slide">
+        <div class="frame">
+          <span class="eyebrow">What Native Gen is</span>
+          <h2>A workflow canvas for social creative — talkable, runnable, publishable.</h2>
+
+          <div class="graph" style="margin-top: 24px;">
+            <div class="node media">
+              <div class="ntitle">mediaInput</div>
+              <div class="nbody">Brief text<br />+ reference images</div>
+            </div>
+            <div class="arrow"></div>
+            <div class="node gen">
+              <div class="ntitle">generationBlock</div>
+              <div class="nbody">fal text→image<br />+ marketing copy</div>
+            </div>
+            <div class="arrow"></div>
+            <div class="exports">
+              <div class="node export"><div class="ntitle">platformExport</div><div class="nbody">YouTube</div></div>
+              <div class="node export"><div class="ntitle">platformExport</div><div class="nbody">Instagram</div></div>
+              <div class="node export"><div class="ntitle">platformExport</div><div class="nbody">Facebook · TikTok</div></div>
+            </div>
+          </div>
+
+          <div class="grid cols-3" style="margin-top: 26px;">
+            <div class="card">
+              <h3>Canvas you can see</h3>
+              <p>React Flow graph with typed pins: <span class="tag good">text</span> <span class="tag">image</span> <span class="tag warn">video</span>. No hidden state.</p>
+            </div>
+            <div class="card">
+              <h3>Agent that edits it</h3>
+              <p>Sidebar chat. The model reads the canvas JSON, rewrites it, and the UI re-renders.</p>
+            </div>
+            <div class="card">
+              <h3>Runner that ships it</h3>
+              <p>Topological execution: fal generation → optional video → publish or download <span class="mono">.zip</span> bundle.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. HOW IT WORKS (user) -->
+      <section class="slide">
+        <div class="frame">
+          <span class="eyebrow">How it works · user side</span>
+          <h2>Three steps. Loop as needed.</h2>
+
+          <div class="grid cols-3" style="margin-top: 22px;">
+            <div class="card">
+              <div class="num">Step 1</div>
+              <h3>Brief the agent</h3>
+              <p>
+                Describe the campaign in plain language. Paste references. The
+                agent <span class="strong">designs or edits</span> the graph —
+                nodes, wiring, platform targets, aspect presets.
+              </p>
+            </div>
+            <div class="card">
+              <div class="num">Step 2</div>
+              <h3>Inspect &amp; tweak</h3>
+              <p>
+                The canvas is the source of truth. Move a node, rewire an edge,
+                drop a <span class="mono">videoBlock</span> in. Ask the agent to
+                "make all exports vertical" — it edits in place.
+              </p>
+            </div>
+            <div class="card">
+              <div class="num">Step 3</div>
+              <h3>Run and ship</h3>
+              <p>
+                Execute the graph. Outputs land per node. Publish through
+                connected accounts, or grab a clean bundle. Re-run only the parts
+                you changed.
+              </p>
+            </div>
+          </div>
+
+          <p class="footnote">
+            Live cost estimate (~$ per fal run) is shown in the header before you
+            press <span class="kbd">Run</span>.
+          </p>
+        </div>
+      </section>
+
+      <!-- 4. THESIS -->
+      <section class="slide">
+        <div class="frame">
+          <span class="eyebrow">Our thesis</span>
+          <h2>Give the AI <span class="accent">primitives</span> to build on — not opinions.</h2>
+          <p class="lead">
+            Abstractions are how humans cope with complexity. They're how AIs get
+            confused. The further a tool sits from the actual data, the more the
+            model has to <em>guess</em> what your API meant.
+          </p>
+
+          <div class="grid cols-2" style="margin-top: 22px;">
+            <div class="card">
+              <h3 class="accent">Primitive surface</h3>
+              <ul class="clean">
+                <li>Reads and writes the <span class="strong">actual document</span>.</li>
+                <li>One mental model: there is a JSON, edit it.</li>
+                <li>Errors are about <span class="strong">the data</span>, not about your API.</li>
+                <li>Validations come from the schema the runner already uses.</li>
+              </ul>
+            </div>
+            <div class="card">
+              <h3 class="accent-2">Opinionated surface</h3>
+              <ul class="clean">
+                <li>Tools per concept: <code>add_node</code>, <code>connect_edge</code>, <code>delete_edge</code>…</li>
+                <li>Two abstractions to learn: yours <em>and</em> the underlying data.</li>
+                <li>Cross-cutting edits (rewire + re-label + re-export) span many calls.</li>
+                <li>Every new feature = a new tool to teach.</li>
+              </ul>
+            </div>
+          </div>
+
+          <p class="footnote">
+            Same insight, different industry: Unix won by exposing files and pipes,
+            not "document objects."
+          </p>
+        </div>
+      </section>
+
+      <!-- 5. THE LESSON: edge/node tools -->
+      <section class="slide">
+        <div class="frame">
+          <span class="eyebrow">The lesson · attempt #1</span>
+          <h2>We first gave the agent "node &amp; edge" tools. It got confused.</h2>
+
+          <div class="grid cols-2" style="margin-top: 22px;">
+            <div class="card">
+              <h3><span class="tag bad">attempt #1</span> Per-concept tools</h3>
+              <p class="muted" style="margin: 6px 0 10px;">A toolbelt that mirrors the data model.</p>
+<pre class="code">add_node(type, position, data)
+update_node(id, partial)
+delete_node(id)
+add_edge(source, target, sourceHandle, targetHandle)
+delete_edge(id)
+relabel_node(id, label)
+set_export_platform(id, platform)
+...</pre>
+              <ul class="clean" style="margin-top: 12px;">
+                <li>Every change = a sequence of calls in the right order.</li>
+                <li>Model had to track state <span class="strong">between</span> calls.</li>
+                <li>Edge cases multiplied — orphaned edges, dangling handles, wrong order of ops.</li>
+                <li>Adding any feature meant adding (and explaining) a new tool.</li>
+              </ul>
+            </div>
+
+            <div class="card">
+              <h3><span class="tag good">what actually worked</span> Read + edit the JSON</h3>
+              <p class="muted" style="margin: 6px 0 10px;">Two tools. The document <em>is</em> the API.</p>
+<pre class="code">read_workflow_canvas()
+  → returns the WorkflowDocument JSON
+
+write_workflow_canvas({ workflowJson })
+  → validates with Zod, applies to canvas</pre>
+              <ul class="clean" style="margin-top: 12px;">
+                <li>The model edits the <span class="strong">same JSON</span> the runtime uses.</li>
+                <li>One round-trip can do <span class="strong">any</span> change — rename, rewire, replace.</li>
+                <li>Schema errors come back as plain text; the model fixes and re-writes.</li>
+                <li>Zero abstraction drift: there is nothing to keep in sync.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 6. WHY PRIMITIVES WIN -->
+      <section class="slide">
+        <div class="frame">
+          <span class="eyebrow">Why primitives win for AI</span>
+          <h2>Less surface to learn → more capability per token.</h2>
+
+          <div class="grid cols-2" style="margin-top: 22px;">
+            <div class="card">
+              <h3>For the model</h3>
+              <ul class="clean">
+                <li><span class="strong">One mental model.</span> JSON in, JSON out.</li>
+                <li><span class="strong">Atomic edits.</span> Whole graph rewrites in a single call — no partial states.</li>
+                <li><span class="strong">Self-healing.</span> Validation errors map 1:1 to the data; the model can repair.</li>
+                <li><span class="strong">Transferable.</span> Today's model and next month's model both understand JSON.</li>
+              </ul>
+            </div>
+            <div class="card">
+              <h3>For us</h3>
+              <ul class="clean">
+                <li><span class="strong">One source of truth.</span> The Zod schema is the contract — for UI, runner, and agent.</li>
+                <li><span class="strong">Features are free.</span> Adding a node type means adding a Zod variant, not a tool.</li>
+                <li><span class="strong">Debuggable.</span> Every agent step is a diffable JSON.</li>
+                <li><span class="strong">Composable.</span> Same tool works for "build from scratch" and "edit in place."</li>
+              </ul>
+            </div>
+          </div>
+
+          <p class="footnote">
+            The agent's system prompt explains the schema — not an API surface.
+            That's all the abstraction we owe it.
+          </p>
+        </div>
+      </section>
+
+      <!-- 7. ANATOMY -->
+      <section class="slide">
+        <div class="frame">
+          <span class="eyebrow">Anatomy of the canvas</span>
+          <h2>Four node types. Typed pins. One JSON document.</h2>
+
+          <div class="grid cols-2" style="margin-top: 18px;">
+            <div class="card">
+              <div class="row">
+                <div class="k"><span class="tag">mediaInput</span></div>
+                <div class="v">Brief text + reference images. The hub the agent fans out from.</div>
+              </div>
+              <div class="row">
+                <div class="k"><span class="tag">generationBlock</span></div>
+                <div class="v">fal text→image (and reference-edit when an image is wired). Optionally emits captions and hashtags as text.</div>
+              </div>
+              <div class="row">
+                <div class="k"><span class="tag">videoBlock</span></div>
+                <div class="v">fal image→video (Wan v2.7). Used for Reels / Shorts / TikTok-style verticals.</div>
+              </div>
+              <div class="row">
+                <div class="k"><span class="tag">platformExport</span></div>
+                <div class="v">Publish target — <span class="mono">youtube</span>, <span class="mono">facebook</span>, <span class="mono">instagram</span>, <span class="mono">tiktok</span>. Accepts image <em>or</em> video.</div>
+              </div>
+            </div>
+
+            <div class="card">
+              <h3>The whole document</h3>
+              <p class="muted" style="margin-top: 0;">What the agent reads and writes:</p>
+<pre class="code">{
+  "id": "…",
+  "name": "Spring drop campaign",
+  "version": 5,
+  "updatedAt": "2026-05-17T…",
+  "nodes": [
+    { "id": "m1", "type": "mediaInput",
+      "data": { "kind": "mediaInput", "value": "…" } },
+    { "id": "g1", "type": "generationBlock",
+      "data": { "kind": "generationBlock",
+                "suffix": "studio-lit, soft shadow, …",
+                "imageSize": "portrait_16_9" } },
+    { "id": "e1", "type": "platformExport",
+      "data": { "kind": "platformExport",
+                "platform": "instagram" } }
+  ],
+  "edges": [
+    { "source": "m1", "target": "g1",
+      "sourceHandle": "text",  "targetHandle": "text" },
+    { "source": "g1", "target": "e1",
+      "sourceHandle": "image", "targetHandle": "image" }
+  ]
+}</pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 8. CLOSING -->
+      <section class="slide">
+        <div class="frame closing-frame">
+          <span class="eyebrow">Closing</span>
+          <h1 class="closing-title">
+            Give AI the <span class="accent">primitives</span>.<br />
+            It&rsquo;ll build the rest.
+          </h1>
+
+          <div class="closing-beats">
+            <div class="beat">
+              <div class="beat-num">01</div>
+              <p>
+                The phase we&rsquo;re in rewards builders who <span class="strong">don&rsquo;t over-abstract</span>
+                — the tools that win expose the data, not opinions about the data.
+              </p>
+            </div>
+            <div class="beat">
+              <div class="beat-num">02</div>
+              <p>
+                Native Gen is what that idea looks like for marketing: a canvas
+                that&rsquo;s also a JSON document, edited by an agent, run by a graph
+                runner, shipped to real platforms.
+              </p>
+            </div>
+            <div class="beat">
+              <div class="beat-num">03</div>
+              <p>
+                Same pattern transfers anywhere there&rsquo;s a workflow worth
+                automating. <span class="strong">Read the doc. Write the doc.</span>
+                That&rsquo;s the whole API.
+              </p>
+            </div>
+          </div>
+
+          <p class="closing-kicker">
+            Native Gen &middot; <span class="muted">Cursor for marketing.</span>
+          </p>
+        </div>
+      </section>
+
+    </main>
+
+    <div class="chrome">
+      <div class="brand">
+        <span class="brand-mark"></span>
+        <span><span class="strong">Native Gen</span> · pitch deck</span>
+      </div>
+
+      <div class="nav">
+        <button id="prev" aria-label="Previous slide">← Prev</button>
+        <div class="progress" aria-hidden><span id="bar"></span></div>
+        <span id="counter" class="mono" style="font-variant-numeric: tabular-nums;">1 / 8</span>
+        <button id="next" aria-label="Next slide">Next →</button>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        const slides = Array.from(document.querySelectorAll(".slide"));
+        const counter = document.getElementById("counter");
+        const bar = document.getElementById("bar");
+        const prev = document.getElementById("prev");
+        const next = document.getElementById("next");
+        let i = 0;
+
+        function show(n) {
+          i = Math.max(0, Math.min(slides.length - 1, n));
+          slides.forEach((s, idx) => s.classList.toggle("active", idx === i));
+          counter.textContent = (i + 1) + " / " + slides.length;
+          bar.style.width = ((i + 1) / slides.length) * 100 + "%";
+          try {
+            history.replaceState(null, "", "#" + (i + 1));
+          } catch (_) {}
+        }
+
+        function fromHash() {
+          const m = location.hash.match(/^#(\d+)$/);
+          if (m) show(parseInt(m[1], 10) - 1);
+          else show(0);
+        }
+
+        document.addEventListener("keydown", (e) => {
+          if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
+          if (e.key === "ArrowRight" || e.key === "PageDown" || e.key === " ") {
+            e.preventDefault();
+            show(i + 1);
+          } else if (e.key === "ArrowLeft" || e.key === "PageUp") {
+            e.preventDefault();
+            show(i - 1);
+          } else if (e.key === "Home") {
+            e.preventDefault();
+            show(0);
+          } else if (e.key === "End") {
+            e.preventDefault();
+            show(slides.length - 1);
+          } else if (e.key === "f" || e.key === "F") {
+            const el = document.documentElement;
+            if (!document.fullscreenElement) el.requestFullscreen?.();
+            else document.exitFullscreen?.();
+          }
+        });
+
+        prev.addEventListener("click", () => show(i - 1));
+        next.addEventListener("click", () => show(i + 1));
+        window.addEventListener("hashchange", fromHash);
+
+        fromHash();
+      })();
+    </script>
+  </body>
+</html>
