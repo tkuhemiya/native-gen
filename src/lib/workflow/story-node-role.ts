@@ -5,6 +5,8 @@ export type StoryNodeRole =
   | "character"
   | "place"
   | "plot"
+  | "script"
+  | "storyboard"
   | "scene"
   | "other";
 
@@ -14,6 +16,8 @@ const ROLE_ORDER: StoryNodeRole[] = [
   "character",
   "place",
   "plot",
+  "script",
+  "storyboard",
   "scene",
   "other",
 ];
@@ -36,6 +40,8 @@ export function inferTextPrimitiveStoryRole(label: string, purpose: string): Sto
   if (/\b(character|cast|protagonist|sheet)\b/i.test(blob)) return "character";
   if (/\b(place|location|venue|registry)\b|establishing shot/i.test(blob)) return "place";
   if (/\b(plot|outline|arc)\b/i.test(blob)) return "plot";
+  if (/\bstoryboard\b/i.test(blob)) return "storyboard";
+  if (/\bscript\b/i.test(blob)) return "script";
   if (/^\s*scene\s*\d+\b/i.test(lab) || /\bscene\s*\d+\b/i.test(blob)) return "scene";
   /** Single-word anchors (“Beat 2”) when not a plot/outline doc. */
   if (/^\s*beat\s*\d+\b/i.test(lab) || /^\s*shot\s*\d+\b/i.test(lab)) return "scene";

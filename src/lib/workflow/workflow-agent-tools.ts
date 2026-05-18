@@ -26,7 +26,9 @@ export function explainWorkflowPlan(plan: WorkflowPlan): { summary: string; stag
   lines.push(`**${plan.name}** (plan v${plan.version}) · ${plan.stages.length} stages`);
   for (const s of plan.stages) {
     if (s.kind === "textPrimitive") {
-      lines.push(`- **${s.id}** · textPrimitive — story seed / lore / copy (single text bucket + purpose tag)`);
+      lines.push(
+        `- **${s.id}** · textPrimitive — lore / plot / sheet / scene planning (see workflow agent: strict seven layers)`,
+      );
     } else if (s.kind === "generation") {
       const ins = s.inputs
         ? Object.entries(s.inputs)

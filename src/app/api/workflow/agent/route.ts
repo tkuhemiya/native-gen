@@ -115,7 +115,7 @@ export async function POST(req: Request) {
             type: "result",
             ...result,
             ...(result.validationRepaired
-              ? { note: "Applied after the planner fixed validation details (you can ignore this)." }
+              ? { note: "Graph needed a validation fix pass before apply." }
               : {}),
           });
         } catch (e) {
@@ -146,9 +146,10 @@ export async function POST(req: Request) {
         return NextResponse.json({
           workflow: result.workflow,
           source: "openai" as const,
+          ...(result.assistantMessage && { assistantMessage: result.assistantMessage }),
           ...(plannerAgentLog?.length && { agentLog: plannerAgentLog }),
           ...(result.validationRepaired && {
-            note: "Applied after the planner fixed validation details (you can ignore this).",
+            note: "Graph needed a validation fix pass before apply.",
           }),
         });
       }

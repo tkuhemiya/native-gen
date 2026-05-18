@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Fragment,
   type ClipboardEvent,
   type KeyboardEvent,
   useCallback,
@@ -64,6 +65,8 @@ type AgentResponse = {
   workflow?: WorkflowDocument;
   source?: "openai" | "template";
   note?: string;
+  /** Model wrap-up after tools (when the planner emits assistant text). */
+  assistantMessage?: string;
   error?: string;
   validationIssues?: string[];
   /** Ordered planner actions (tool runs, retries) for the chat UI */
@@ -75,6 +78,7 @@ type AgentResultLine = {
   workflow?: WorkflowDocument | null;
   source?: "openai" | "template";
   note?: string;
+  assistantMessage?: string;
   error?: string;
   validationIssues?: string[];
   agentLog?: string[];
@@ -344,22 +348,15 @@ export function WorkflowAgentPanel({
       setAgentActivityFatalError(false);
       if (body.agentLog?.length) setLastAgentLog(body.agentLog);
       await onApplyDocument(body.workflow);
-      const hint =
-        body.source === "openai"
-          ? ["Applied agent workflow from the model.", body.note].filter(Boolean).join(" ")
-          : body.note ?? "Applied keyword-based template workflow.";
-      onStatus(hint);
+      const detailParts = [body.assistantMessage, body.note].filter(
+        (s): s is string => typeof s === "string" && s.trim().length > 0,
+      );
       const assistantContent =
-        body.source === "openai"
-          ? [
-              "Applied the workflow to the canvas. Ask for tweaks (e.g. more caption variants, TikTok crop, optional motion).",
-              body.note,
-            ]
-              .filter(Boolean)
-              .join("\n\n")
-          : ["Applied a starter workflow to the canvas from your brief.", body.note].filter(Boolean).join(
-              "\n\n",
-            );
+        detailParts.join("\n\n") ||
+        (body.source === "openai"
+          ? "Updated the canvas — the graph should match your last request."
+          : "Applied a starter workflow from your brief (keyword template). Add OPENAI_API_KEY for the full planner.");
+      onStatus(detailParts[0] ?? (body.source === "openai" ? "Canvas updated." : assistantContent.slice(0, 120)));
       setMessages((m) => [
         ...m,
         {
@@ -531,6 +528,7 @@ export function WorkflowAgentPanel({
           workflow: finalResult.workflow,
           source: "openai",
           note: finalResult.note,
+          assistantMessage: finalResult.assistantMessage,
           agentLog: finalResult.agentLog,
         });
         return;
@@ -583,6 +581,7 @@ export function WorkflowAgentPanel({
       setMessages((m) => [...m, { id: cid(), role: "assistant", content: msg }]);
     } finally {
       setBusy(false);
+      setThinkingExpanded(false);
     }
   }, [
     draft,
@@ -632,39 +631,62 @@ export function WorkflowAgentPanel({
         ref={scrollRef}
         className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-3 py-3"
       >
-        {messages.map((m) => (
-          <div
-            key={m.id}
-            className={
-              m.role === "user"
-                ? "ml-4 flex justify-end"
-                : "mr-3 flex justify-start"
-            }
-          >
-            <div
-              className={
-                m.role === "user"
-                  ? "max-w-[95%] rounded-lg bg-primary px-2.5 py-2 text-xs leading-relaxed text-primary-foreground"
-                  : "max-w-[95%] rounded-lg bg-muted px-2.5 py-2 text-xs leading-relaxed text-foreground"
-              }
-            >
-              {m.images?.length ? (
-                <div className="mb-2 flex flex-wrap gap-1">
-                  {m.images.map((im, idx) => (
-                    // eslint-disable-next-line @next/next/no-img-element -- chat thumbnails from data URLs
-                    <img
-                      key={`${im.dataUrl.slice(0, 48)}-${idx}`}
-                      src={im.dataUrl}
-                      alt=""
-                      className="max-h-16 max-w-[5.5rem] rounded border border-primary-foreground/25 object-cover"
-                    />
-                  ))}
-                </div>
+        {messages.map((m, i) => {
+          const isLastAssistant = m.role === "assistant" && i === messages.length - 1;
+          const showCompletedTraceBefore =
+            !busy &&
+            isLastAssistant &&
+            (thinkingText.trim().length > 0 || streamTools.length > 0);
+          return (
+            <Fragment key={m.id}>
+              {showCompletedTraceBefore ? (
+                <AgentStreamTrace
+                  thinkingText={thinkingText}
+                  thinkingExpanded={thinkingExpanded}
+                  onThinkingExpandedChange={setThinkingExpanded}
+                  streamTools={streamTools}
+                  onToolExpandedChange={(toolCallId, open) =>
+                    setStreamTools((prev) =>
+                      prev.map((trow) =>
+                        trow.toolCallId === toolCallId ? { ...trow, expanded: open } : trow,
+                      ),
+                    )
+                  }
+                />
               ) : null}
-              <span className="whitespace-pre-wrap">{m.content}</span>
-            </div>
-          </div>
-        ))}
+              <div
+                className={
+                  m.role === "user"
+                    ? "ml-4 flex justify-end"
+                    : "mr-3 flex justify-start"
+                }
+              >
+                <div
+                  className={
+                    m.role === "user"
+                      ? "max-w-[95%] rounded-lg bg-primary px-2.5 py-2 text-xs leading-relaxed text-primary-foreground"
+                      : "max-w-[95%] rounded-lg bg-muted px-2.5 py-2 text-xs leading-relaxed text-foreground"
+                  }
+                >
+                  {m.images?.length ? (
+                    <div className="mb-2 flex flex-wrap gap-1">
+                      {m.images.map((im, idx) => (
+                        // eslint-disable-next-line @next/next/no-img-element -- chat thumbnails from data URLs
+                        <img
+                          key={`${im.dataUrl.slice(0, 48)}-${idx}`}
+                          src={im.dataUrl}
+                          alt=""
+                          className="max-h-16 max-w-[5.5rem] rounded border border-primary-foreground/25 object-cover"
+                        />
+                      ))}
+                    </div>
+                  ) : null}
+                  <span className="whitespace-pre-wrap">{m.content}</span>
+                </div>
+              </div>
+            </Fragment>
+          );
+        })}
         {busy ? (
           <AgentStreamTrace
             thinkingText={thinkingText}

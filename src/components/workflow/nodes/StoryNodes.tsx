@@ -33,6 +33,16 @@ const STORY_ROLE_BADGE: Record<
     label: "Plot",
     className: "border-sky-500/40 bg-sky-500/12 text-sky-950 dark:text-sky-200",
   },
+  script: {
+    label: "Script",
+    className:
+      "border-fuchsia-500/40 bg-fuchsia-500/12 text-fuchsia-950 dark:text-fuchsia-200",
+  },
+  storyboard: {
+    label: "Board",
+    className:
+      "border-orange-500/40 bg-orange-500/12 text-orange-950 dark:text-orange-200",
+  },
   scene: {
     label: "Scene",
     className:
@@ -152,7 +162,7 @@ export function TextPrimitiveNode(props: NodeProps<AppNode>) {
       </label>
       <input
         className="mb-2 w-full rounded-md border border-border bg-muted px-2 py-1 text-xs text-foreground outline-none"
-        placeholder="lore · world · character · place · plot · scene…"
+        placeholder="lore · world · character · place · plot · script · storyboard · scene…"
         value={data.purpose}
         onChange={(e) => updateNodeData(id, { ...data, purpose: e.target.value })}
       />
@@ -234,7 +244,7 @@ export function TextLiteralNode(props: NodeProps<AppNode>) {
       </label>
       <input
         className="mb-2 w-full rounded-md border border-border bg-muted px-2 py-1 text-xs text-foreground outline-none"
-        placeholder="lore · world · character · place · plot · scene…"
+        placeholder="lore · world · character · place · plot · script · storyboard · scene…"
         value={data.purpose}
         onChange={(e) => updateNodeData(id, { ...data, purpose: e.target.value })}
       />
