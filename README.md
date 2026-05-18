@@ -1,36 +1,50 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Native Gen
 
-## Getting Started
+Native Gen is a visual node-graph editor for social-creative pipelines. You brief an agent in natural language; the agent reads and rewrites the canvas; the runner generates images and short video, drafts captions, and either publishes to your connected accounts or hands you a clean export bundle.
 
-First, run the development server:
+Built for the Cursor Buildathon.
+
+![Native Gen canvas — a workflow graph going from a brief node through a generation block and video block out to YouTube, Instagram, Facebook, and TikTok exports.](pitchdesk/canvas.png)
+
+## The idea
+
+The interesting bet behind Native Gen is about how to expose things to an AI agent.
+
+We think of a social campaign as a small set of **primitives** — a brief, a generation step, an optional video step, a platform target — that snap together like building blocks on a canvas. The whole graph is just one JSON document.
+
+Instead of giving the agent an opinionated toolbelt (`add_node`, `connect_edge`, `relabel_node`, …), we gave it two primitives: read the document, write the document. That's the whole API. The agent edits the same JSON the runtime executes, so:
+
+- Any change — rename, rewire, replace, build from scratch — is one round-trip.
+- The schema is the contract; validation errors map straight back to the data.
+- Adding a new kind of block doesn't mean teaching the agent a new tool.
+
+Same idea as Unix exposing files and pipes instead of "document objects": give the model the primitives, let it compose.
+
+## Run it locally
 
 ```bash
+npm install
+cp .env.example .env.local
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+You only need `FAL_KEY` and `OPENAI_API_KEY` to use the canvas. OAuth keys are only needed if you want to publish directly to YouTube or Meta — without them you can still run workflows and download the export bundle.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Environment variables
 
-## Learn More
+Copy `.env.example` to `.env.local` and fill in what you need:
 
-To learn more about Next.js, take a look at the following resources:
+| Variable | Required for | Purpose |
+| --- | --- | --- |
+| `FAL_KEY` | core | Media generation. |
+| `OPENAI_API_KEY` | core | The workflow agent. |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | optional | YouTube publishing. |
+| `META_APP_ID` / `META_APP_SECRET` | optional | Facebook + Instagram publishing. |
+| `NEXT_PUBLIC_APP_URL` | optional | Public URL used in OAuth redirects. |
+| `NATIVE_GEN_GATE_SECRET` | optional | Gate the demo behind a shared secret. |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Pitch deck
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Open [`pitchdesk/index.html`](pitchdesk/index.html) in a browser for the slide deck. Speaker notes live in [`docs/pitch-deck.md`](docs/pitch-deck.md).
