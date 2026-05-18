@@ -10,7 +10,7 @@ import {
   getFalTextToImageEndpointId,
 } from "@/lib/fal/text-to-image-config";
 import { getFalImageToVideoEndpointId } from "@/lib/fal/video-config";
-import { assertConnectedDAG, GraphError, withSceneJoinSyntheticEdges } from "./graph";
+import { assertConnectedDAG, GraphError } from "./graph";
 import {
   incomingMediaLanes,
   outgoingMediaLanes,
@@ -46,7 +46,7 @@ export type EstimateWorkflowFalUsdResult =
  */
 export function estimateWorkflowFalUsd(doc: WorkflowDocument): EstimateWorkflowFalUsdResult {
   try {
-    assertConnectedDAG(doc.nodes, withSceneJoinSyntheticEdges(doc.nodes, doc.edges));
+    assertConnectedDAG(doc.nodes, doc.edges);
   } catch (e) {
     return { ok: false, error: e instanceof GraphError ? e.message : String(e) };
   }

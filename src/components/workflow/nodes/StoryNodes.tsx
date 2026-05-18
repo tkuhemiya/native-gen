@@ -1,6 +1,6 @@
 "use client";
 
-import { Handle, Position, useReactFlow, type NodeProps } from "@xyflow/react";
+import { Handle, Position, useEdges, useReactFlow, type NodeProps } from "@xyflow/react";
 import { saveAs } from "file-saver";
 import { useNodeRunOutput, useWorkflowRunContext } from "@/components/workflow/WorkflowRunContext";
 import type { AppNode } from "@/lib/workflow/app-node";
@@ -320,64 +320,83 @@ export function SceneComposeNode(props: NodeProps<AppNode>) {
 export function SceneJoinNode(props: NodeProps<AppNode>) {
   const { data, id } = props;
   const { updateNodeData } = useReactFlow();
+  const edges = useEdges();
   const { activeNodeId, phase } = useWorkflowRunContext();
   const runningHere = phase === "running" && activeNodeId === id;
 
   if (data.kind !== "sceneJoin") return null;
 
-  const gaps = Math.max(0, data.orderedClipNodeIds.length - 1);
+  const clipEdgeCount = edges.filter(
+    (e) => e.target === id && (e.targetHandle === "clips" || e.targetHandle == null),
+  ).length;
+
+  const gaps = Math.max(0, clipEdgeCount - 1);
   const transLines =
     gaps === 0
       ? ""
       : Array.from({ length: gaps }, (_, i) => data.transitions[i]?.mode ?? "cut").join("\n");
 
-  const commitLists = (clipText: string, transText: string) => {
-    const orderedClipNodeIds = clipText
-      .split(/\r?\n/)
-      .map((s) => s.trim())
-      .filter(Boolean);
+  const commitTransitions = (transText: string) => {
     const modes = transText
       .split(/\r?\n/)
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean);
-    const transitions = Array.from({ length: Math.max(0, orderedClipNodeIds.length - 1) }, (_, i) => {
+    const transitionCount = Math.max(0, clipEdgeCount - 1);
+    const transitions = Array.from({ length: transitionCount }, (_, i) => {
       const m = modes[i] ?? "cut";
       return { mode: m === "bridge" ? ("bridge" as const) : ("cut" as const) };
     });
-    updateNodeData(id, { ...data, orderedClipNodeIds, transitions });
+    updateNodeData(id, { ...data, transitions });
   };
 
   return (
     <div
-      className={`min-w-[300px] max-w-[380px] rounded-lg border border-border bg-card px-3 py-2 text-card-foreground shadow-sm${
+      className={`relative min-w-[300px] max-w-[380px] rounded-lg border border-border bg-card px-3 py-2 text-card-foreground shadow-sm${
         runningHere ? " ring-2 ring-orange-500 ring-offset-2 ring-offset-background" : ""
       }`}
     >
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="clips"
+        className="!left-[-6px] !top-1/2 !h-3 !w-3 !-translate-y-1/2 !border-2 !border-card !bg-violet-500"
+        title="Clips in — wire multiple video blocks (order follows edge order in the workflow)"
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        id="video"
+        className="!right-[-6px] !top-1/2 !h-3 !w-3 !-translate-y-1/2 !border-2 !border-card !bg-violet-500"
+        title="Stitched video — wire to Output preview"
+      />
       <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
         Join scenes
       </div>
-      <p className="mb-2 text-[9px] text-muted-foreground">
-        Ordered clip node ids (one per line). Gap modes (`cut` / `bridge`) — unsupported bridges prompt
-        you during Run.
+      <p className="mb-2 text-[9px] leading-snug text-muted-foreground">
+        Wire each clip from a video block’s <strong className="text-foreground">violet video</strong> pin
+        into this pin (multiple wires allowed). Stitch order matches edge order in the document.
+        Gap modes <code className="font-mono">cut</code> / <code className="font-mono">bridge</code> —
+        bridges are unsupported server-side.
       </p>
-      <label className="mb-1 block text-[10px] font-medium text-muted-foreground">
-        Clip node ids · order == timeline
-      </label>
-      <textarea
-        className="nodrag nopan nowheel mb-2 min-h-[96px] w-full resize-y rounded-md border border-border bg-muted px-2 py-1 font-mono text-[10px] text-foreground outline-none"
-        defaultValue={data.orderedClipNodeIds.join("\n")}
-        key={data.orderedClipNodeIds.join("|")}
-        onBlur={(e) => commitLists(e.target.value, transLines)}
-      />
+      <p className="mb-2 text-[10px] font-medium text-muted-foreground">
+        Wired clips: <span className="font-mono text-foreground">{clipEdgeCount}</span>
+        {gaps > 0 ? (
+          <span>
+            {" "}
+            · {gaps} gap{gaps === 1 ? "" : "s"}
+          </span>
+        ) : null}
+      </p>
       <label className="mb-1 block text-[10px] font-medium text-muted-foreground">
         Gap modes ({gaps || 0} gaps)
       </label>
       <textarea
-        className="nodrag nopan nowheel mb-2 min-h-[56px] w-full resize-y rounded-md border border-border bg-muted px-2 py-1 font-mono text-[10px] text-foreground outline-none"
-        placeholder={"cut\ncut"}
+        className="nodrag nopan nowheel mb-2 min-h-[56px] w-full resize-y rounded-md border border-border bg-muted px-2 py-1 font-mono text-[10px] text-foreground outline-none disabled:opacity-50"
+        placeholder={gaps > 0 ? "cut\ncut" : "Wire at least two clips to edit gaps"}
         defaultValue={transLines}
-        key={`${data.orderedClipNodeIds.join("|")}:${data.transitions.map((t) => t.mode).join(",")}`}
-        onBlur={(e) => commitLists(data.orderedClipNodeIds.join("\n"), e.target.value)}
+        key={`${clipEdgeCount}:${data.transitions.map((t) => t.mode).join(",")}`}
+        disabled={gaps === 0}
+        onBlur={(e) => commitTransitions(e.target.value)}
       />
       <label className="mb-1 block text-[10px] font-medium text-muted-foreground">Label</label>
       <input

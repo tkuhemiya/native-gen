@@ -55,7 +55,8 @@ export function logWorkflow(
 
   const consoleFn =
     level === "error"
-      ? console.error
+      ? /* Next.js dev overlay often attaches to console.error even outside render; keep diagnostics visible without false "crashes". */
+        console.warn
       : level === "warn"
         ? console.warn
         : level === "debug"

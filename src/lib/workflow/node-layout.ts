@@ -15,8 +15,8 @@ export const NODE_ANCHOR: Record<CanvasNodeType, { w: number; h: number }> = {
 
 /** Horizontal gap between DAG depth columns (after the widest node in each column). */
 const LAYOUT_COLUMN_GAP = 220;
-/** Vertical gap between stacked nodes in the same column. */
-const LAYOUT_ROW_GAP = 72;
+/** Vertical gap between stacked nodes in the same column (tidy / agent layout). */
+const LAYOUT_ROW_GAP = 120;
 
 function anchorForNode(node: WorkflowNode): { w: number; h: number } {
   const t = node.type;

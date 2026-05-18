@@ -1,8 +1,8 @@
 import {
   assertConnectedDAG,
   GraphError,
+  sortedIncomingClipEdgesForJoin,
   topologicalOrderPreferLeft,
-  withSceneJoinSyntheticEdges,
 } from "./graph";
 import {
   type GenerationPlan,
@@ -251,6 +251,39 @@ function extractFalProxyErrorMessage(
   return `Generation failed (${httpStatus})`;
 }
 
+/** POST /api/fal/generation — surfaces network failures and HTTP status in GraphError messages. */
+async function fetchFalGenerationJson(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  let res: Response;
+  try {
+    res = await fetch("/api/fal/generation", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    const net = e instanceof Error ? e.message : String(e);
+    throw new GraphError(
+      `Could not reach /api/fal/generation (${net}). Check that the app is running and the network is available.`,
+    );
+  }
+  const rawText = await res.text();
+  let parsedBody: Record<string, unknown> = {};
+  try {
+    const p = JSON.parse(rawText) as unknown;
+    if (p && typeof p === "object" && !Array.isArray(p)) {
+      parsedBody = p as Record<string, unknown>;
+    }
+  } catch {
+    /* non-json */
+  }
+  if (!res.ok) {
+    const msg = extractFalProxyErrorMessage(parsedBody, res.status, rawText);
+    const http = `${res.status}${res.statusText ? ` ${res.statusText}` : ""}`;
+    throw new GraphError(`${msg} (${http})`.trim());
+  }
+  return parsedBody;
+}
+
 function generationCacheSatisfiesPlan(
   plan: GenerationPlan,
   cached: Extract<RuntimeOutputs[string], { type: "generation" }>,
@@ -282,11 +315,19 @@ async function assembleClipsWithBridgeHandling(
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const res = await fetch("/api/workflow/assemble", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ clips, transitions: current }),
-    });
+    let res: Response;
+    try {
+      res = await fetch("/api/workflow/assemble", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clips, transitions: current }),
+      });
+    } catch (e) {
+      const net = e instanceof Error ? e.message : String(e);
+      throw new GraphError(
+        `Could not reach /api/workflow/assemble (${net}). Check that the app is running and ffmpeg is available on the server.`,
+      );
+    }
     const buf = await res.arrayBuffer();
     const ct = res.headers.get("content-type") ?? "";
 
@@ -344,7 +385,9 @@ async function assembleClipsWithBridgeHandling(
       );
     }
 
-    throw new GraphError(extractFalProxyErrorMessage(parsedBody, res.status, rawText));
+    throw new GraphError(
+      `${extractFalProxyErrorMessage(parsedBody, res.status, rawText)} (${res.status}${res.statusText ? ` ${res.statusText}` : ""})`.trim(),
+    );
   }
 }
 
@@ -370,9 +413,8 @@ export async function runWorkflowDAG(
     reuseCandidates: reuseOutputs ? Object.keys(reuseOutputs).length : 0,
   });
 
-  const graphEdges = withSceneJoinSyntheticEdges(nodes, edges);
-  assertConnectedDAG(nodes, graphEdges);
-  const order = topologicalOrderPreferLeft(nodes, graphEdges);
+  assertConnectedDAG(nodes, edges);
+  const order = topologicalOrderPreferLeft(nodes, edges);
   const totalSteps = order.length;
   const nodesById = new Map(nodes.map((n) => [n.id, n]));
   const incomingByTarget = new Map<string, WorkflowEdge[]>();
@@ -527,12 +569,13 @@ export async function runWorkflowDAG(
         break;
       }
       case "sceneJoin": {
-        const ordered = data.orderedClipNodeIds;
-        if (ordered.length === 0) {
-          throw new GraphError(`Join “${label}” needs at least one clip id in its ordered list`);
+        const clipEdges = sortedIncomingClipEdgesForJoin(id, edges);
+        const orderedSources = clipEdges.map((e) => e.source);
+        if (orderedSources.length === 0) {
+          throw new GraphError(`Join “${label}” needs at least one clip wired to the clips pin`);
         }
         const clips: string[] = [];
-        for (const clipId of ordered) {
+        for (const clipId of orderedSources) {
           const o = outputs[clipId];
           if (!o || o.type !== "video") {
             throw new GraphError(
@@ -541,7 +584,7 @@ export async function runWorkflowDAG(
           }
           clips.push(o.url);
         }
-        const trans = normalizeJoinTransitions(ordered.length, data.transitions);
+        const trans = normalizeJoinTransitions(orderedSources.length, data.transitions);
         const assembledUrl = await assembleClipsWithBridgeHandling(
           clips,
           trans,
@@ -639,26 +682,7 @@ export async function runWorkflowDAG(
           logWorkflow("info", "runner/fal", "Calling /api/fal/generation", {
             intent,
           });
-          const res = await fetch("/api/fal/generation", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-          });
-          const rawText = await res.text();
-          let parsedBody: Record<string, unknown> = {};
-          try {
-            const p = JSON.parse(rawText) as unknown;
-            if (p && typeof p === "object" && !Array.isArray(p)) {
-              parsedBody = p as Record<string, unknown>;
-            }
-          } catch {
-            /* non-json */
-          }
-          if (!res.ok) {
-            const msg = extractFalProxyErrorMessage(parsedBody, res.status, rawText);
-            throw new GraphError(msg);
-          }
-          return parsedBody as Record<string, unknown>;
+          return fetchFalGenerationJson(body);
         }
 
         let textOut: string | undefined;
@@ -769,32 +793,14 @@ export async function runWorkflowDAG(
         const prompt = (promptParts.join("\n\n") || motion ||
           "smooth subtle motion, continuity-friendly camera move").slice(0, 4000);
 
-        const res = await fetch("/api/fal/generation", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            intent: "image-to-video",
-            prompt,
-            imageUrl: sourceImageUrl,
-            aspectRatio: data.aspectRatio,
-            resolution: data.resolution,
-            durationSec: data.durationSec,
-          }),
+        const parsedBody = await fetchFalGenerationJson({
+          intent: "image-to-video",
+          prompt,
+          imageUrl: sourceImageUrl,
+          aspectRatio: data.aspectRatio,
+          resolution: data.resolution,
+          durationSec: data.durationSec,
         });
-        const rawText = await res.text();
-        let parsedBody: Record<string, unknown> = {};
-        try {
-          const p = JSON.parse(rawText) as unknown;
-          if (p && typeof p === "object" && !Array.isArray(p)) {
-            parsedBody = p as Record<string, unknown>;
-          }
-        } catch {
-          /* non-json */
-        }
-        if (!res.ok) {
-          const msg = extractFalProxyErrorMessage(parsedBody, res.status, rawText);
-          throw new GraphError(msg);
-        }
         const url =
           typeof (parsedBody.video as { url?: string } | undefined)?.url === "string"
             ? (parsedBody.video as { url: string }).url
@@ -831,6 +837,13 @@ export async function runWorkflowDAG(
 
 export function wrapError(e: unknown): GraphError {
   if (e instanceof GraphError) return e;
-  if (e instanceof Error) return new GraphError(e.message);
+  if (e instanceof Error) {
+    let m = e.message || "Error";
+    if (e.cause !== undefined) {
+      const c = e.cause instanceof Error ? e.cause.message : String(e.cause);
+      if (c) m = `${m} — cause: ${c}`;
+    }
+    return new GraphError(m);
+  }
   return new GraphError("Unknown error");
 }

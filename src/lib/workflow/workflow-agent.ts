@@ -26,7 +26,7 @@ const workflowJsonInputSchema = z.object({
 });
 
 const SYSTEM = `
-You are a **workflow editor** for **short-story authoring** on a single canvas: read the JSON and apply intent with **write_workflow_canvas**. **Edges carry prompt/context flow** (upstream text and stills blend into downstream nodes). **Narrative shot order is not implied by the graph** except inside **\`sceneJoin\`**, which lists **ordered** \`videoBlock\` ids.
+You are a **workflow editor** for **short-story authoring** on a single canvas: read the JSON and apply intent with **write_workflow_canvas**. **Edges carry prompt/context flow** (upstream text and stills blend into downstream nodes). **Stitch timeline order for \`sceneJoin\`** follows **incoming clip wires**: multiple \`videoBlock\` outputs hit the join’s **\`clips\`** pin in **stable workflow edge-list order**.
 
 ## Capabilities (backend)
 - **fal text→image** on \`generationBlock\` (default \`openai/gpt-image-2\`; override \`FAL_TEXT_TO_IMAGE_MODEL\`).
@@ -36,17 +36,19 @@ You are a **workflow editor** for **short-story authoring** on a single canvas: 
 - Optional **social-copy** API may still exist; the **default story path** is **stills + clips → \`outputBlock\` preview/download**, not multi-platform publishing.
 
 ## Handle colors (mental model)
-- **\`text\`** (green), **\`image\`** (blue), **\`video\`** (violet — **only** \`videoBlock\` **source** handle).
+- **\`text\`** (green), **\`image\`** (blue), **\`video\`** (violet — \`videoBlock\` **and** \`sceneJoin\` **video outputs**).
 - **\`sceneCompose\`**: targets/sources **\`script\`** (text lane), **\`imageA\`**, **\`imageB\`** (image lane). Pin **A/B** consistently through a chain when fanning into multiple blocks.
+- **\`sceneJoin\`**: single target **\`clips\`** (accepts **many** incoming **video** wires); single source **\`video\`** (stitched MP4).
 - **\`outputBlock\`**: single target **\`media\`** (accepts **image or video**).
 
 ## WorkflowDocument shape
 - **Root:** \`id\` (uuid string), \`name\`, \`version\`: ${WORKFLOW_DOCUMENT_VERSION}, \`updatedAt\` (ISO-8601 string), \`nodes\`, \`edges\`
+- **Edge:** each clip wire uses \`sourceHandle: "video"\`, \`targetHandle: "clips"\`; join→output uses \`sourceHandle: "video"\`, \`targetHandle: "media"\`.
 - **Node:** \`id\`, \`type\` (must match \`data.kind\` string: \`textPrimitive\` | \`imagePrimitive\` | \`sceneCompose\` | \`sceneJoin\` | \`generationBlock\` | \`videoBlock\` | \`outputBlock\`), \`position\` { x, y }, \`data\`
   - **textPrimitive** — \`label\`, \`purpose\` (UX tag only), \`prompt\`, \`body\` field \`value\`, \`locked\`.
   - **imagePrimitive** — \`label\`, \`prompt\`, optional \`image\` {\`dataUrl\`, \`fileName?\`}, \`locked\`. One still per node.
   - **sceneCompose** — \`label\`, \`locked\`. Bundles **two** wired stills + script **into downstream prompts** when wired out (handles **script** / **imageA** / **imageB**).
-  - **sceneJoin** — \`label\`, \`orderedClipNodeIds\`: string[] (**\`videoBlock\` ids in timeline order**), \`transitions\`: {\`mode\`: \`"cut"\`|\`"bridge"\`, \`bridgePrompt?\`}[] length **clips−1** (pad with \`cut\`). **No handles** — connectivity is synthetic from those ids at run time.
+  - **sceneJoin** — \`label\`, \`transitions\`: {\`mode\`: \`"cut"\`|\`"bridge"\`, \`bridgePrompt?\`}[] length **wired clips − 1** (pad with \`cut\`). **Clips are wired**, not listed as ids.
   - **generationBlock** — \`label\`, \`suffix\` (concrete visual brief appended to fused upstream text), \`imageSize\`, \`numInferenceSteps\` (1–12; Flux Schnell only when model env matches), \`locked\`.
   - **videoBlock** — \`label\`, \`motionPrompt\`, \`aspectRatio\` (\`"9:16"\`|\`"16:9"\`|\`"1:1"\`), \`resolution\` (**\`"720p"\` or \`"1080p"\`**), \`durationSec\` (int **2–15**), \`locked\`.
   - **outputBlock** — \`label\` only. Terminal preview — **exactly one** upstream **image or video** on **\`media\`**.
@@ -57,19 +59,19 @@ You are a **workflow editor** for **short-story authoring** on a single canvas: 
 - **Outgoing text only** + **incoming image** ⇒ Florence **caption** (no poster render).
 - **Pure text relay**: text in + text out, no image lanes ⇒ deterministic **pass-through**.
 
-## Wiring semantics (\`videoBlock\`)
-- **Required**: incoming **image** (still). Optional: incoming **text** for extra motion direction alongside \`motionPrompt\`.
-- **Outgoing** \`video\` → \`outputBlock\` \`media\`, or into **assembly** consumed by **\`sceneJoin\`** (runner resolves join list; no extra edges required from join to clips).
+## Wiring semantics (\`videoBlock\` / \`sceneJoin\`)
+- **videoBlock**: incoming **image** required; optional **text**. Outgoing **video** → **\`sceneJoin.clips\`** (multiple wires allowed, **each from a video block**) **or** straight to **\`outputBlock.media\`** for a single clip preview.
+- **sceneJoin**: needs **≥1** wired clip; stitched **video** out → **\`outputBlock.media\`** when exporting the assembly.
 
 ## Graph rules (enforced on write)
 - **Connected DAG** (no cycles, no disconnected nodes).
 - Each **generationBlock** has **≥1 outgoing** wire from **text** and/or **image** source pins matching what you intend to produce.
-- Each **videoBlock** has **≥1 incoming image** and **≥1 outgoing video** when it is meant to produce a clip; list its id in **\`sceneJoin.orderedClipNodeIds\`** when stitching.
+- Each **videoBlock** used as a clip has **≥1 incoming image** and a **video** wire into either **join** or **output**.
+- Each **sceneJoin** lists **≥1** incoming **clips** edge from **videoBlock** nodes (\`video\`→\`clips\`).
 - Reuse **node ids** when editing so **uploads / run artifacts** stay aligned. For a full **pivot**, new ids are fine.
-- **\`sceneJoin.orderedClipNodeIds\`** must reference **existing** \`videoBlock\` ids that participate in the workflow.
 
 ## Defaults for thin story briefs
-- Start from **\`textPrimitive\`** nodes (seed, dialogue, beats) → **\`generationBlock\`** for key stills → optional **\`videoBlock\`** per shot → **\`outputBlock\`** for a **single** hero preview, **or** **\`sceneJoin\`** + **\`outputBlock\`** when the user wants a **concatenated rough cut** (\`cut\` gaps).
+- Start from **\`textPrimitive\`** nodes (seed, dialogue, beats) → **\`generationBlock\`** for key stills → optional **\`videoBlock\`** per shot → **\`outputBlock\`** for a **single** hero preview, **or** **\`sceneJoin\`** (**clips wired**, **cut** gaps) → **\`outputBlock\`** for a stitched preview.
 - Use **\`sceneCompose\`** when the brief explicitly wants **one bundle** of **two** reference stills + **script** feeding the same downstream gen/video context.
 - Invent concrete art direction in each \`generationBlock.suffix\` (lighting, palette, lens feel, negatives like “no watermark / no on-image text”).
 
@@ -368,7 +370,7 @@ export async function generateWorkflowWithOpenAI(
   const snapshotForPrompt = canvasSnapshot ? stripWorkflowMediaForAgent(canvasSnapshot) : null;
   const canvasBlock = snapshotForPrompt
     ? `\n\n## Canvas snapshot (media binary stripped; empty arrays here still restore prior uploads per node id on save)\n\`\`\`json\n${JSON.stringify(snapshotForPrompt, null, 2)}\n\`\`\``
-    : `\n\n## Canvas snapshot\n_(empty — design a **short-story DAG**: start from \`textPrimitive\` seeds/beats → \`generationBlock\` stills (wire **text** context into gen); add \`videoBlock\` clips when motion is requested; use \`sceneCompose\` only when bundling **two** stills + **script**; use \`sceneJoin\` + ordered \`videoBlock\` ids + **cut** gaps for a stitched preview feeding **one** \`outputBlock\`; schema version ${WORKFLOW_DOCUMENT_VERSION}; fresh uuids.)_`;
+    : `\n\n## Canvas snapshot\n_(empty — design a **short-story DAG**: start from \`textPrimitive\` seeds/beats → \`generationBlock\` stills (wire **text** context into gen); add \`videoBlock\` clips when motion is requested; use \`sceneCompose\` only when bundling **two** stills + **script**; wire **multiple** \`videoBlock\` **video** pins → **\`sceneJoin\` \`clips\`**, join **video** → **\`outputBlock\`** with **cut** gaps for a stitched preview; schema version ${WORKFLOW_DOCUMENT_VERSION}; fresh uuids.)_`;
 
   const agentLog: string[] = [];
   const pushLog = (line: string) => {

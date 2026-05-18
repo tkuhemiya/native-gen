@@ -1,11 +1,7 @@
 import { falFluxPresetSizeSchema } from "@/lib/fal/text-to-image-config";
 import { z } from "zod";
 
-import {
-  assertConnectedDAG,
-  GraphError,
-  withSceneJoinSyntheticEdges,
-} from "./graph";
+import { assertConnectedDAG, GraphError } from "./graph";
 import { incomingMediaLanes, outgoingMediaLanes, planGeneration } from "./generation-plan";
 import { layoutWorkflowNodesCompactDAG } from "./node-layout";
 import { reconcileGenerationImageSizes } from "./platform-aspect-presets";
@@ -367,8 +363,7 @@ export function compileWorkflowPlanToDocument(
       targetHandle: e.targetHandle,
     }));
 
-    const graphEdges = withSceneJoinSyntheticEdges(nodes, edges);
-    assertConnectedDAG(nodes, graphEdges);
+    assertConnectedDAG(nodes, edges);
 
     const skipImageInference = new Set<string>();
     for (const st of plan.stages) {

@@ -9,6 +9,7 @@ import {
   type WorkflowDocument,
   type WorkflowEdge,
 } from "./schema";
+import { migrateSceneJoinClipListToEdges } from "./migrate-scene-join";
 
 /** Remap legacy Flux Schnell nodes to unified generation blocks before validating current schema. */
 export function coerceFluxToGeneration(raw: unknown): unknown {
@@ -204,8 +205,10 @@ function migrateMarketingNodesToStoryPrimitives(raw: unknown): unknown {
  * Accept current workflows; coerce legacy marketing nodes into story primitives (best-effort).
  */
 export function normalizeWorkflowDocument(raw: unknown): WorkflowDocument | null {
-  const pipe = migrateMarketingNodesToStoryPrimitives(
-    coerceVideoBlockResolution(coerceFluxToGeneration(raw)),
+  const pipe = migrateSceneJoinClipListToEdges(
+    migrateMarketingNodesToStoryPrimitives(
+      coerceVideoBlockResolution(coerceFluxToGeneration(raw)),
+    ),
   );
   const parsed = workflowDocumentSchema.safeParse(pipe);
   return parsed.success ? parsed.data : null;

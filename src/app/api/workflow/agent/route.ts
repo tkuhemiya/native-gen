@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { buildTemplateWorkflowDocument } from "@/lib/workflow/template-from-brief";
+import { normalizeWorkflowDocument } from "@/lib/workflow/migrate";
 import { workflowDocumentSchema } from "@/lib/workflow/schema";
 import type { WorkflowDocument } from "@/lib/workflow/schema";
 import { mergeComposerImagesIntoPrimaryImagePrimitive } from "@/lib/workflow/workflow-canvas-agent";
@@ -90,7 +91,10 @@ export async function POST(req: Request) {
   let canvasSnapshot: WorkflowDocument | null = null;
   const rawWorkflow = parsed.data.workflow;
   if (rawWorkflow !== undefined) {
-    const checked = workflowDocumentSchema.safeParse(rawWorkflow);
+    const normalized = normalizeWorkflowDocument(rawWorkflow);
+    const checked = normalized
+      ? ({ success: true as const, data: normalized })
+      : workflowDocumentSchema.safeParse(rawWorkflow);
     if (checked.success) canvasSnapshot = checked.data;
   }
 

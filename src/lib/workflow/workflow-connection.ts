@@ -27,6 +27,10 @@ export function sourceMediaLane(
     if (sourceHandle === "imageA" || sourceHandle === "imageB") return "image";
     return "wildcard";
   }
+  if (sourceType === "sceneJoin") {
+    if (sourceHandle === "video") return "video";
+    return "wildcard";
+  }
   return "wildcard";
 }
 
@@ -56,6 +60,10 @@ function targetMediaLane(
   if (targetType === "sceneCompose") {
     if (targetHandle === "script") return "text";
     if (targetHandle === "imageA" || targetHandle === "imageB") return "image";
+    return null;
+  }
+  if (targetType === "sceneJoin") {
+    if (targetHandle === "clips" || targetHandle == null) return "video";
     return null;
   }
   if (targetType === "outputBlock") {

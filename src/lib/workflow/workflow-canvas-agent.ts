@@ -1,7 +1,7 @@
 import {
   assertConnectedDAG,
+  assertSceneJoinClipWiring,
   GraphError,
-  withSceneJoinSyntheticEdges,
 } from "./graph";
 import {
   incomingMediaLanes,
@@ -152,7 +152,8 @@ export function validateAndFinalizeWorkflowWrite(
   };
 
   try {
-    assertConnectedDAG(doc.nodes, withSceneJoinSyntheticEdges(doc.nodes, doc.edges));
+    assertConnectedDAG(doc.nodes, doc.edges);
+    assertSceneJoinClipWiring(doc.nodes, doc.edges);
     const incomingByTarget = buildIncomingByTarget(doc.edges);
     for (const node of doc.nodes) {
       if (node.data.kind === "generationBlock") {

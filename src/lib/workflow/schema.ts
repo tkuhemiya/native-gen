@@ -1,7 +1,7 @@
 import { falFluxPresetSizeSchema } from "@/lib/fal/text-to-image-config";
 import { z } from "zod";
 
-export const WORKFLOW_DOCUMENT_VERSION = 6 as const;
+export const WORKFLOW_DOCUMENT_VERSION = 7 as const;
 
 const mediaAssetSchema = z.object({
   dataUrl: z.string(),
@@ -81,9 +81,7 @@ export const nodeDataSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("sceneJoin"),
     label: z.string(),
-    /** Ordered clip producers (`videoBlock` ids). Duplicates allowed. */
-    orderedClipNodeIds: z.array(z.string()),
-    /** Length should be `orderedClipNodeIds.length - 1`; padded with `cut` when shorter. */
+    /** Gap between consecutive **wired** clips (document edge order). Length = clips − 1. */
     transitions: z.array(sceneJoinTransitionSchema),
   }),
   z.object({
@@ -179,7 +177,6 @@ export function defaultNodeData(type: CanvasNodeType): NodeData {
       return {
         kind: "sceneJoin",
         label: "Join scenes",
-        orderedClipNodeIds: [],
         transitions: [],
       };
     case "generationBlock":

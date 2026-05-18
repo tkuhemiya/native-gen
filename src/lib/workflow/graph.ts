@@ -147,27 +147,47 @@ export function topologicalOrderPreferLeft(
   return ordered;
 }
 
-/** Implicit deps so `sceneJoin` runs after referenced clip nodes without mandatory wiring. */
-export function withSceneJoinSyntheticEdges(
-  nodes: WorkflowNode[],
+/**
+ * Clip → join edges in stable order: order of appearance in `edges` (migration + user wiring order).
+ */
+export function sortedIncomingClipEdgesForJoin(
+  joinId: string,
   edges: WorkflowEdge[],
 ): WorkflowEdge[] {
-  const synth: WorkflowEdge[] = [];
-  for (const n of nodes) {
-    if (n.data.kind !== "sceneJoin") continue;
-    let i = 0;
-    for (const cid of n.data.orderedClipNodeIds) {
-      synth.push({
-        id: `__join_dep:${n.id}:${cid}:${i}`,
-        source: cid,
-        target: n.id,
-        sourceHandle: null,
-        targetHandle: null,
-      });
-      i += 1;
+  const hits = edges
+    .map((e, idx) => ({ e, idx }))
+    .filter(
+      ({ e }) =>
+        e.target === joinId && (e.targetHandle === "clips" || e.targetHandle == null),
+    );
+  hits.sort((a, b) => a.idx - b.idx);
+  return hits.map((h) => h.e);
+}
+
+export function assertSceneJoinClipWiring(nodes: WorkflowNode[], edges: WorkflowEdge[]): void {
+  const nodesById = new Map(nodes.map((n) => [n.id, n]));
+  for (const node of nodes) {
+    if (node.data.kind !== "sceneJoin") continue;
+    const clipEdges = sortedIncomingClipEdgesForJoin(node.id, edges);
+    if (clipEdges.length === 0) {
+      throw new GraphError(
+        `Join “${node.data.label.trim() || node.data.kind}” needs at least one video clip wired to the clips pin`,
+      );
+    }
+    for (const e of clipEdges) {
+      const src = nodesById.get(e.source);
+      if (!src || src.data.kind !== "videoBlock") {
+        throw new GraphError(
+          `Join “${node.data.label.trim() || node.data.kind}” only accepts clips from video blocks`,
+        );
+      }
+      if (e.sourceHandle != null && e.sourceHandle !== "video") {
+        throw new GraphError(
+          `Join “${node.data.label.trim() || node.data.kind}”: wire from each clip’s **video** output pin`,
+        );
+      }
     }
   }
-  return [...edges, ...synth];
 }
 
 export function assertConnectedDAG(nodes: WorkflowNode[], edges: WorkflowEdge[]) {

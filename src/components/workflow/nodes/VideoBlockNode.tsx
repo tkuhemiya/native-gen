@@ -194,7 +194,7 @@ export function VideoBlockNode(props: NodeProps<AppNode>) {
             type="source"
             position={Position.Right}
             id="video"
-            title="Video out — wire into Join scenes or Output preview"
+            title="Video out — wire into Join scenes (clips pin) or Output preview"
             className="!right-[-6px] !h-3 !w-3 !border-2 !border-card !bg-violet-500"
           />
         </div>

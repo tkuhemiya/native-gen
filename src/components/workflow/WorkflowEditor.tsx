@@ -657,6 +657,7 @@ export function WorkflowEditor() {
       const ge = wrapError(error);
       logWorkflow("error", "WorkflowEditor", "Run failed", {
         message: ge.message,
+        ...(error instanceof Error && error.name ? { errorName: error.name } : {}),
       });
       setRunPhase("error");
       const partial = partialRunOutputsRef.current;
