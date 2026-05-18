@@ -144,6 +144,20 @@ function formatToolTitle(name: string) {
   return name.replace(/_/g, " ");
 }
 
+/** Stream/log lines that describe tool or validation failures — show in red when the run overall succeeds. */
+function agentActivityLogLineIsErrorTone(line: string): boolean {
+  const t = line.trim();
+  if (!t) return false;
+  if (/^failed —/i.test(t)) return true;
+  if (/\bfailed:\s/i.test(t)) return true;
+  if (/giving up after/i.test(t)) return true;
+  if (/grapherror|did not validate|validation issues|unexpected output|workflow json did not validate/i.test(t))
+    return true;
+  if (/^[-•]\s/.test(t)) return true;
+  if (/\n(?:[-•]\s)/.test(line)) return true;
+  return false;
+}
+
 function AgentStreamTrace({
   thinkingText,
   thinkingExpanded,
@@ -176,35 +190,50 @@ function AgentStreamTrace({
           </div>
         </details>
       ) : null}
-      {streamTools.map((t) => (
-        <details
-          key={t.toolCallId}
-          open={t.expanded}
-          className="rounded-lg border border-border bg-muted/50 text-muted-foreground"
-          onToggle={(e) => onToolExpandedChange(t.toolCallId, e.currentTarget.open)}
-        >
-          <summary className="cursor-pointer list-none px-2.5 py-1.5 text-[10px] font-medium text-foreground/90 marker:content-none [&::-webkit-details-marker]:hidden">
-            <span className="flex items-center justify-between gap-2">
-              <span className="truncate">
-                {t.pending ? (
-                  <span className="text-muted-foreground">Running </span>
-                ) : t.ok === false ? (
-                  <span className="text-destructive">Failed </span>
-                ) : (
-                  <span className="text-muted-foreground">Done </span>
-                )}
-                <span className="font-mono text-[10px]">{formatToolTitle(t.toolName)}</span>
+      {streamTools.map((t) => {
+        const toolFailed = !t.pending && t.ok === false;
+        return (
+          <details
+            key={t.toolCallId}
+            open={t.expanded}
+            className={
+              toolFailed
+                ? "rounded-lg border border-destructive/45 bg-destructive/[0.07] text-muted-foreground"
+                : "rounded-lg border border-border bg-muted/50 text-muted-foreground"
+            }
+            onToggle={(e) => onToolExpandedChange(t.toolCallId, e.currentTarget.open)}
+          >
+            <summary className="cursor-pointer list-none px-2.5 py-1.5 text-[10px] font-medium marker:content-none [&::-webkit-details-marker]:hidden">
+              <span className="flex items-center justify-between gap-2">
+                <span className="truncate">
+                  {t.pending ? (
+                    <span className="text-muted-foreground">Running </span>
+                  ) : toolFailed ? (
+                    <span className="text-destructive">Failed </span>
+                  ) : (
+                    <span className="text-muted-foreground">Done </span>
+                  )}
+                  <span
+                    className={`font-mono text-[10px] ${toolFailed ? "text-destructive/95" : "text-foreground/90"}`}
+                  >
+                    {formatToolTitle(t.toolName)}
+                  </span>
+                </span>
+                {t.pending ? <AgentRunningDots className="shrink-0 text-primary opacity-80" /> : null}
               </span>
-              {t.pending ? <AgentRunningDots className="shrink-0 text-primary opacity-80" /> : null}
-            </span>
-          </summary>
-          {t.summary ? (
-            <div className="border-t border-border px-2.5 py-2 text-[10px] leading-snug whitespace-pre-wrap">
-              {t.summary}
-            </div>
-          ) : null}
-        </details>
-      ))}
+            </summary>
+            {t.summary ? (
+              <div
+                className={`border-t border-border px-2.5 py-2 text-[10px] leading-snug whitespace-pre-wrap ${
+                  toolFailed ? "text-destructive" : ""
+                }`}
+              >
+                {t.summary}
+              </div>
+            ) : null}
+          </details>
+        );
+      })}
     </div>
   );
 }
@@ -227,6 +256,15 @@ export function WorkflowAgentPanel({
   const [busy, setBusy] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [lastAgentLog, setLastAgentLog] = useState<string[] | null>(null);
+  /**
+   * Full red “Agent activity” panel — only when the **request ends without applying** a workflow.
+   * Not used for mid-run tool failures that the planner later corrects (those stay normal card + red text).
+   *
+   * Set true when: NDJSON stream has no body; stream ends with no `result` row; HTTP error response;
+   * JSON body missing workflow; OpenAI path returns error without workflow / validation-only failure;
+   * `fetch` throws (network / offline).
+   */
+  const [agentActivityFatalError, setAgentActivityFatalError] = useState(false);
   const [thinkingText, setThinkingText] = useState("");
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
   const [streamTools, setStreamTools] = useState<StreamToolRow[]>([]);
@@ -293,6 +331,7 @@ export function WorkflowAgentPanel({
     setPendingComposerImages([]);
     setBusy(true);
     setLastAgentLog([]);
+    setAgentActivityFatalError(false);
     setThinkingText("");
     setThinkingExpanded(false);
     setStreamTools([]);
@@ -302,6 +341,7 @@ export function WorkflowAgentPanel({
     const workflow = getCanvasSnapshot();
 
     const finalizeSuccess = async (body: AgentResponse & { workflow: WorkflowDocument }) => {
+      setAgentActivityFatalError(false);
       if (body.agentLog?.length) setLastAgentLog(body.agentLog);
       await onApplyDocument(body.workflow);
       const hint =
@@ -348,6 +388,8 @@ export function WorkflowAgentPanel({
       if (isNdjson) {
         const reader = res.body?.getReader();
         if (!reader) {
+          setAgentActivityFatalError(true);
+          setLastAgentLog((prev) => [...(prev ?? []), "Failed — agent stream had no body."]);
           onStatus("Agent stream had no body.");
           setMessages((m) => [
             ...m,
@@ -400,7 +442,7 @@ export function WorkflowAgentPanel({
                 break;
               case "tool_end":
                 if (!ev.ok) {
-                  console.error("[workflow-agent] Tool call failed", {
+                  console.log("[workflow-agent] Tool call finished without success", {
                     toolName: ev.toolName,
                     toolCallId: ev.toolCallId,
                     summary: ev.summary,
@@ -430,6 +472,8 @@ export function WorkflowAgentPanel({
         }
 
         if (!finalResult) {
+          setAgentActivityFatalError(true);
+          setLastAgentLog((prev) => [...(prev ?? []), "Failed — stream ended without a result (no output)."]);
           onStatus("Agent stream ended without a result.");
           setMessages((m) => [
             ...m,
@@ -444,6 +488,8 @@ export function WorkflowAgentPanel({
           const msg = finalResult.error;
           const issues =
             finalResult.validationIssues?.filter(Boolean).map((line) => `• ${line}`).join("\n") ?? "";
+          setAgentActivityFatalError(true);
+          setLastAgentLog((prev) => [...(prev ?? []), `Failed — ${msg}`]);
           onStatus(msg);
           setMessages((m) => [
             ...m,
@@ -463,6 +509,8 @@ export function WorkflowAgentPanel({
             "The model could not produce a workflow that passes validation on the server.";
           const issues =
             finalResult.validationIssues?.filter(Boolean).map((line) => `• ${line}`).join("\n") ?? "";
+          setAgentActivityFatalError(true);
+          setLastAgentLog((prev) => [...(prev ?? []), `Failed — ${msg}`]);
           onStatus(msg);
           setMessages((m) => [
             ...m,
@@ -493,6 +541,8 @@ export function WorkflowAgentPanel({
         const msg = body.error ?? "Agent request failed";
         const issues =
           body.validationIssues?.filter(Boolean).map((line) => `• ${line}`).join("\n") ?? "";
+        setAgentActivityFatalError(true);
+        setLastAgentLog((prev) => [...(body.agentLog ?? prev ?? []), `Failed — ${msg}`]);
         onStatus(msg);
         setMessages((m) => [
           ...m,
@@ -502,7 +552,6 @@ export function WorkflowAgentPanel({
             content: issues ? `Could not update the workflow: ${msg}\n\n${issues}` : `Could not update the workflow: ${msg}`,
           },
         ]);
-        if (body.agentLog?.length) setLastAgentLog(body.agentLog);
         return;
       }
       if (body.agentLog?.length) {
@@ -512,6 +561,8 @@ export function WorkflowAgentPanel({
       if (!body.workflow) {
         const msg = "Agent returned no workflow";
         const tail = body.agentLog?.length ? body.agentLog[body.agentLog.length - 1] : null;
+        setAgentActivityFatalError(true);
+        setLastAgentLog((prev) => [...(body.agentLog ?? prev ?? []), `Failed — ${msg}`]);
         onStatus([msg, tail].filter(Boolean).join(" — "));
         setMessages((m) => [
           ...m,
@@ -526,6 +577,8 @@ export function WorkflowAgentPanel({
       await finalizeSuccess(body as AgentResponse & { workflow: WorkflowDocument });
     } catch {
       const msg = "Agent request failed";
+      setAgentActivityFatalError(true);
+      setLastAgentLog((prev) => [...(prev ?? []), `Failed — ${msg}`]);
       onStatus(msg);
       setMessages((m) => [...m, { id: cid(), role: "assistant", content: msg }]);
     } finally {
@@ -631,11 +684,43 @@ export function WorkflowAgentPanel({
           </div>
         ) : null}
         {!busy && lastAgentLog?.length ? (
-          <div className="mr-3 rounded-lg border border-border bg-background/90 px-2.5 py-2 text-[10px] leading-snug text-muted-foreground shadow-sm">
-            <p className="mb-1 font-semibold uppercase tracking-wide text-foreground/80">Agent activity</p>
-            <ul className="list-inside list-disc space-y-0.5">
+          <div
+            className={
+              agentActivityFatalError
+                ? "mr-3 rounded-lg border border-destructive/50 bg-destructive/10 px-2.5 py-2 text-[10px] leading-snug text-destructive shadow-sm"
+                : "mr-3 rounded-lg border border-border bg-background/90 px-2.5 py-2 text-[10px] leading-snug text-muted-foreground shadow-sm"
+            }
+            role={agentActivityFatalError ? "alert" : undefined}
+          >
+            <p
+              className={
+                agentActivityFatalError
+                  ? "mb-1 font-semibold uppercase tracking-wide text-destructive"
+                  : "mb-1 font-semibold uppercase tracking-wide text-foreground/80"
+              }
+            >
+              Agent activity{agentActivityFatalError ? " · error" : ""}
+            </p>
+            <ul
+              className={
+                agentActivityFatalError
+                  ? "list-inside list-disc space-y-0.5 text-destructive/95"
+                  : "list-inside list-disc space-y-0.5"
+              }
+            >
               {lastAgentLog.map((line, i) => (
-                <li key={`${i}-${line.slice(0, 24)}`}>{line}</li>
+                <li
+                  key={`${i}-${line.slice(0, 24)}`}
+                  className={
+                    agentActivityFatalError
+                      ? undefined
+                      : agentActivityLogLineIsErrorTone(line)
+                        ? "text-destructive"
+                        : undefined
+                  }
+                >
+                  {line}
+                </li>
               ))}
             </ul>
           </div>
