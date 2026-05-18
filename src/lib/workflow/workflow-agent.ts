@@ -22,7 +22,7 @@ const workflowJsonInputSchema = z.object({
     .string()
     .min(4)
     .describe(
-      `Full WorkflowDocument JSON: id, name, version (${WORKFLOW_DOCUMENT_VERSION}), updatedAt, nodes[], edges[]. Follow the **story primitive hierarchy** in the system prompt: primitives **fan in** to higher layers; **everything flows downstream** to a terminal **\`outputBlock\`** (still and/or clip path) unless the user explicitly asks for a non-runnable outline. **Script + storyboard (Layer 5) must feed Layer 6** before final renders. Prefer **lower-cost** gen settings when the brief allows (see system prompt **Cost / generation discipline**). Graph checks are **structural only** (DAG, legal pins, schema). **Literal / frozen behavior** uses **\`textPrimitive\` / \`imagePrimitive\`** with **\`locked: true\`** — see system prompt; **do not** invent separate literal node types. **\`videoBlock\`**: beat on green **\`text\`**, **\`motionPrompt\`** = camera/motion.`,
+      `Full WorkflowDocument JSON: id, name, version (${WORKFLOW_DOCUMENT_VERSION}), updatedAt, nodes[], edges[]. **Default:** a **dense seven-layer DAG** \u2014 parallel Lore, Plot, **per-character / per-place** \`textPrimitive\`s, **many scenes**, heavy **fan-in**, Layer 5 per beat, production through **\`outputBlock\`** (clips: **\u22652** \`videoBlock\` + **\`sceneJoin\`** when the arc spans beats/locations/time unless user says one-shot). Never the smallest-valid graph unless user asks **stub/outline-only**. Structural checks only (DAG, pins, schema). **Frozen behavior:** **\`locked: true\`** on **\`textPrimitive\` / \`imagePrimitive\`** \u2014 see system prompt. **\`videoBlock\`**: beat on green **\`text\`**, **\`motionPrompt\`** = camera/motion.`,
     ),
 });
 
@@ -237,7 +237,7 @@ function buildPlannerMessages(
 }
 
 export function workflowAgentLegacyUserContent(prompt: string): string {
-  return `Design a **seven-layer** short-story workflow DAG: **parallel** Lore Bible, Plot, Character sheets, Place registry (\`textPrimitive\` + Image Ref stills); **fan-in** all relevant primitives (green \`text\`, blue \`image\`) into **Scenes → Script/Storyboard → production \`generationBlock\` → \`videoBlock\` (if motion) → \`sceneJoin\` (if needed) → \`outputBlock\`**. No Lore→Plot→… spine that dead-ends. Coherency labels on nodes. Brief:\n\n${prompt.trim().slice(0, 6000)}`;
+  return `Design a **large seven-layer** short-story DAG (many nodes and long edge lists): **parallel** Lore Bible, Plot, **one text sheet per focal character**, **Place registry entries per recurring location**, optional **Image Ref** stills per face/establishing shot; **fan-in every** upstream primitive into **each** Scene, Script/Storyboard beat, and producer. **Prefer \u22653 scenes** for journey/act structure; **prefer \u22652 \`videoBlock\` + \`sceneJoin\`** when the brief mentions film/movies/travel/montage unless the user wants a single shot. Expand thin prompts into concrete names/beats/graph structure. Brief:\n\n${prompt.trim().slice(0, 6000)}`;
 }
 
 export type WorkflowAgentGenerateResult = {
@@ -308,7 +308,7 @@ export async function generateWorkflowWithOpenAI(
   const snapshotForPrompt = canvasSnapshot ? stripWorkflowMediaForAgent(canvasSnapshot) : null;
   const canvasBlock = snapshotForPrompt
     ? `\n\n## Canvas snapshot (media binary stripped; empty arrays here still restore prior uploads per node id on save)\n\`\`\`json\n${JSON.stringify(snapshotForPrompt, null, 2)}\n\`\`\``
-    : `\n\n## Canvas snapshot\n_(empty — design the **seven-layer story DAG**: parallel **Lore Bible**, **Plot**, **Character** / **Place** \`textPrimitive\`s + **Image Ref** nodes; **fan-in** those **green \`text\`** (and **blue \`image\`** for refs) into **Scenes → Script/Storyboard → \`generationBlock\`** (production + optional board stills) → **\`videoBlock\`** when motion applies (**image + text** wired) → **\`sceneJoin\`** if multiple clips → **\`outputBlock\`**. **No** dead-end story \`textPrimitive\`. Schema ${WORKFLOW_DOCUMENT_VERSION}; fresh uuids.)_`;
+    : `\n\n## Canvas snapshot\n_(empty — lay down a **wide** seven-layer story DAG: separate **Character** & **Place** \`textPrimitive\`s per canon element, **multiple** Scene + Layer-5 beats, **dense fan-in**; motion \u2192 usually **multiple** \`videoBlock\` + \`sceneJoin\` \u2192 \`outputBlock\` unless the user asked for **one-shot** or **outline-only**. **Do not** return a skeleton graph. Schema ${WORKFLOW_DOCUMENT_VERSION}; fresh uuids.)_`;
 
   const agentLog: string[] = [];
   const pushLog = (line: string) => {
@@ -355,7 +355,7 @@ export async function generateWorkflowWithOpenAI(
 
     const writeWorkflowCanvasTool = tool({
       description:
-        "Apply the full WorkflowDocument JSON. Obey the **story primitive hierarchy**: **fan-in** from Lore/Plot/Characters/Places into scenes and script; **connect the full stack** through Layer 6 to **\`outputBlock\`** — no orphan planning text. **Prefer lower-cost generation** (fewer gens, lower Flux steps, 720p / shorter clips) when quality is not specified as premium — see system **Cost / generation discipline**. **Script/storyboard (Layer 5) feeds production \`generationBlock\` / \`videoBlock\`**. **Locked \`textPrimitive\` / uploaded \`imagePrimitive\`** for frozen canon — no separate literal node kinds. **Do not** add locked **image** primitives unless the user wants **fixed uploads**. **\`videoBlock\`**: narrative on **\`text\` in**, **\`motionPrompt\`** = camera/motion. **\`sceneJoin\`**: prefer **\`cut\`**. No video→video.",
+        "Apply the full WorkflowDocument JSON. Build a **wide layered graph**, not a minimal one: **parallel** Lore + Plot + **separate sheets** per important character & place + **multiple** scene primitives; **heavy fan-in** green \\`text\\` into every downstream consumer; **Layer 5** per scene/montage beat before matching **\\`generationBlock\\` / \\`videoBlock\\`**; terminate at **\\`outputBlock\\`**. Motion/film: prefer **multiple** clips + **\\`sceneJoin\\`** for journey-style arcs unless user insists on one take. Tune resolution/steps/duration via **Production settings**. **Locked** \\`textPrimitive\\` / \\`imagePrimitive\\` for frozen anchors. **\\`videoBlock\\`**: narrative on **\\`text\\` in**, **\\`motionPrompt\\`** = camera. **\\`sceneJoin\\`**: prefer **\\`cut\\`**. No video→video.",
       inputSchema: workflowJsonInputSchema,
       execute: async ({ workflowJson }) => {
         totalWriteAttempts += 1;
