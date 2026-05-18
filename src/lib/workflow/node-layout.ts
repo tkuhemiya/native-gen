@@ -5,20 +5,24 @@ import {
   storyRoleSortKey,
 } from "@/lib/workflow/story-node-role";
 
-type TextPrimitiveWorkflowNode = WorkflowNode & {
-  data: Extract<WorkflowNode["data"], { kind: "textPrimitive" }>;
+type TextStoryWorkflowNode = WorkflowNode & {
+  data:
+    | Extract<WorkflowNode["data"], { kind: "textPrimitive" }>
+    | Extract<WorkflowNode["data"], { kind: "textLiteral" }>;
 };
 
-type ImagePrimitiveWorkflowNode = WorkflowNode & {
-  data: Extract<WorkflowNode["data"], { kind: "imagePrimitive" }>;
+type ImageStoryWorkflowNode = WorkflowNode & {
+  data:
+    | Extract<WorkflowNode["data"], { kind: "imagePrimitive" }>
+    | Extract<WorkflowNode["data"], { kind: "imageLiteral" }>;
 };
 
-function isTextPrimitiveNode(n: WorkflowNode): n is TextPrimitiveWorkflowNode {
-  return n.data.kind === "textPrimitive";
+function isStoryImageNode(n: WorkflowNode): n is ImageStoryWorkflowNode {
+  return n.data.kind === "imagePrimitive" || n.data.kind === "imageLiteral";
 }
 
-function isImagePrimitiveNode(n: WorkflowNode): n is ImagePrimitiveWorkflowNode {
-  return n.data.kind === "imagePrimitive";
+function isStoryTextNode(n: WorkflowNode): n is TextStoryWorkflowNode {
+  return n.data.kind === "textPrimitive" || n.data.kind === "textLiteral";
 }
 
 /**
@@ -26,7 +30,9 @@ function isImagePrimitiveNode(n: WorkflowNode): n is ImagePrimitiveWorkflowNode 
  */
 export const NODE_ANCHOR: Record<CanvasNodeType, { w: number; h: number }> = {
   textPrimitive: { w: 280, h: 260 },
+  textLiteral: { w: 280, h: 210 },
   imagePrimitive: { w: 280, h: 280 },
+  imageLiteral: { w: 280, h: 270 },
   sceneCompose: { w: 300, h: 220 },
   sceneJoin: { w: 320, h: 320 },
   generationBlock: { w: 340, h: 340 },
@@ -43,7 +49,9 @@ function anchorForNode(node: WorkflowNode): { w: number; h: number } {
   const t = node.type;
   if (
     t === "textPrimitive" ||
+    t === "textLiteral" ||
     t === "imagePrimitive" ||
+    t === "imageLiteral" ||
     t === "sceneCompose" ||
     t === "sceneJoin" ||
     t === "generationBlock" ||
@@ -85,7 +93,7 @@ function isTextToGenTextPin(e: WorkflowEdge, nById: Map<string, WorkflowNode>): 
   const tgt = nById.get(e.target);
   if (!src || !tgt) return false;
   if (tgt.data.kind !== "generationBlock") return false;
-  if (src.data.kind !== "textPrimitive") return false;
+  if (src.data.kind !== "textPrimitive" && src.data.kind !== "textLiteral") return false;
   const th = e.targetHandle;
   return th === "text" || th === null || th === undefined;
 }
@@ -95,7 +103,7 @@ function isImageToGenRefPin(e: WorkflowEdge, nById: Map<string, WorkflowNode>): 
   const tgt = nById.get(e.target);
   if (!src || !tgt) return false;
   if (tgt.data.kind !== "generationBlock") return false;
-  if (src.data.kind !== "imagePrimitive") return false;
+  if (src.data.kind !== "imagePrimitive" && src.data.kind !== "imageLiteral") return false;
   const th = e.targetHandle;
   return th === "image" || th === null || th === undefined;
 }
@@ -113,20 +121,20 @@ function directTextFeedsToGen(
   genId: string,
   edges: WorkflowEdge[],
   nById: Map<string, WorkflowNode>,
-): TextPrimitiveWorkflowNode[] {
-  const out: TextPrimitiveWorkflowNode[] = [];
+): TextStoryWorkflowNode[] {
+  const out: TextStoryWorkflowNode[] = [];
   for (const e of edges) {
     if (e.target !== genId) continue;
     if (!isTextToGenTextPin(e, nById)) continue;
     const n = nById.get(e.source);
-    if (n && isTextPrimitiveNode(n)) out.push(n);
+    if (n && isStoryTextNode(n)) out.push(n);
   }
   return out;
 }
 
 function pairCharacterPortraitImages(
-  textNodes: TextPrimitiveWorkflowNode[],
-  imageNodes: ImagePrimitiveWorkflowNode[],
+  textNodes: TextStoryWorkflowNode[],
+  imageNodes: ImageStoryWorkflowNode[],
   genNodes: WorkflowNode[],
   edges: WorkflowEdge[],
   nById: Map<string, WorkflowNode>,
@@ -229,8 +237,8 @@ function tryLayoutWorkflowStoryAware(nodes: WorkflowNode[], edges: WorkflowEdge[
   const videoNodes = nodes.filter((n) => n.data.kind === "videoBlock");
   const joinNodes = nodes.filter((n) => n.data.kind === "sceneJoin");
   const outputNodes = nodes.filter((n) => n.data.kind === "outputBlock");
-  const textNodes = nodes.filter(isTextPrimitiveNode);
-  const imageNodes = nodes.filter(isImagePrimitiveNode);
+  const textNodes = nodes.filter(isStoryTextNode);
+  const imageNodes = nodes.filter(isStoryImageNode);
   const composeNodes = nodes.filter((n) => n.data.kind === "sceneCompose");
 
   const X_GLOBAL = 0;

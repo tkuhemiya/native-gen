@@ -33,7 +33,7 @@ export function FlowContextMenuPortal({
 
   const pad = 8;
   const estW = 220;
-  const estH = menu.kind === "pane" ? 404 : 120;
+  const estH = menu.kind === "pane" ? 452 : 120;
   const left = Math.max(
     pad,
     Math.min(menu.clientX, window.innerWidth - estW - pad),
@@ -64,7 +64,15 @@ export function FlowContextMenuPortal({
             className={itemCls}
             onClick={() => onAddBlock("textPrimitive")}
           >
-            Text
+            Text (merge)
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className={itemCls}
+            onClick={() => onAddBlock("textLiteral")}
+          >
+            Text (literal)
           </button>
           <button
             type="button"
@@ -72,7 +80,15 @@ export function FlowContextMenuPortal({
             className={itemCls}
             onClick={() => onAddBlock("imagePrimitive")}
           >
-            Image · still
+            Image (merge)
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className={itemCls}
+            onClick={() => onAddBlock("imageLiteral")}
+          >
+            Image (literal)
           </button>
           <p className={labelCls}>Scene graph</p>
           <button

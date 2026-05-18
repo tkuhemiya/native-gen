@@ -487,6 +487,36 @@ export async function runWorkflowDAG(
         });
         break;
       }
+      case "textLiteral": {
+        if (
+          data.locked &&
+          reuseOutputs &&
+          reuseOutputs[id]?.type === "text" &&
+          reuseOutputs[id].value.trim()
+        ) {
+          const cached = reuseOutputs[id];
+          outputs[id] = cached;
+          onNodeComplete?.({
+            nodeId: id,
+            index: step + 1,
+            total: totalSteps,
+            label,
+            output: cached,
+            reused: true,
+          });
+          break;
+        }
+        const value = data.value.trim();
+        outputs[id] = { type: "text", value };
+        onNodeComplete?.({
+          nodeId: id,
+          index: step + 1,
+          total: totalSteps,
+          label,
+          output: outputs[id],
+        });
+        break;
+      }
       case "imagePrimitive": {
         const localUrl = data.image?.dataUrl;
         if (data.locked && reuseOutputs && reuseOutputs[id]?.type === "image") {
@@ -509,6 +539,39 @@ export async function runWorkflowDAG(
         if (!url?.trim()) {
           throw new GraphError(
             `Image primitive “${label}” needs an uploaded still or an upstream generated image wired to its image pin`,
+          );
+        }
+        outputs[id] = { type: "image", url: url.trim() };
+        onNodeComplete?.({
+          nodeId: id,
+          index: step + 1,
+          total: totalSteps,
+          label,
+          output: outputs[id],
+        });
+        break;
+      }
+      case "imageLiteral": {
+        const localUrl = data.image?.dataUrl;
+        if (data.locked && reuseOutputs && reuseOutputs[id]?.type === "image") {
+          const cached = reuseOutputs[id];
+          if (cached.url?.trim()) {
+            outputs[id] = cached;
+            onNodeComplete?.({
+              nodeId: id,
+              index: step + 1,
+              total: totalSteps,
+              label,
+              output: cached,
+              reused: true,
+            });
+            break;
+          }
+        }
+        const url = localUrl && localUrl.trim();
+        if (!url) {
+          throw new GraphError(
+            `Image literal “${label}” needs an uploaded still (this node does not inherit upstream images)`,
           );
         }
         outputs[id] = { type: "image", url: url.trim() };

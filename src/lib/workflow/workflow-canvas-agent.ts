@@ -39,7 +39,7 @@ export function stripWorkflowMediaForAgent(doc: WorkflowDocument): WorkflowDocum
   return {
     ...doc,
     nodes: doc.nodes.map((n) => {
-      if (n.data.kind !== "imagePrimitive") return n;
+      if (n.data.kind !== "imagePrimitive" && n.data.kind !== "imageLiteral") return n;
       return {
         ...n,
         data: { ...n.data, image: undefined },
@@ -56,9 +56,9 @@ export function mergePreservedMediaFromPrevious(
   if (!previous) return doc;
   const prevById = new Map(previous.nodes.map((n) => [n.id, n]));
   const nodes: WorkflowNode[] = doc.nodes.map((n) => {
-    if (n.data.kind !== "imagePrimitive") return n;
+    if (n.data.kind !== "imagePrimitive" && n.data.kind !== "imageLiteral") return n;
     const prev = prevById.get(n.id);
-    if (!prev || prev.data.kind !== "imagePrimitive") return n;
+    if (!prev || (prev.data.kind !== "imagePrimitive" && prev.data.kind !== "imageLiteral")) return n;
     const emptyNew = !n.data.image?.dataUrl;
     const hadPrev = !!prev.data.image?.dataUrl;
     if (emptyNew && hadPrev && prev.data.image) {
@@ -76,7 +76,7 @@ export function mergePreservedMediaFromPrevious(
 }
 
 /**
- * Fills composer-attached stills into the first available `imagePrimitive` slots (one image per primitive).
+ * Fills composer-attached stills into the first available `imagePrimitive` / `imageLiteral` slots (one image per node).
  */
 export function mergeComposerImagesIntoPrimaryImagePrimitive(
   doc: WorkflowDocument,
@@ -89,7 +89,8 @@ export function mergeComposerImagesIntoPrimaryImagePrimitive(
 
   let idx = 0;
   const nodes = doc.nodes.map((n) => {
-    if (n.data.kind !== "imagePrimitive" || idx >= safe.length) return n;
+    if ((n.data.kind !== "imagePrimitive" && n.data.kind !== "imageLiteral") || idx >= safe.length)
+      return n;
     if (n.data.image?.dataUrl) return n;
     const a = safe[idx]!;
     idx += 1;

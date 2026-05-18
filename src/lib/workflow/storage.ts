@@ -432,7 +432,7 @@ export async function rehydrateRuntimeOutputsFromArtifacts(
 
     const kind = node.data.kind;
 
-    if (kind === "textPrimitive") {
+    if (kind === "textPrimitive" || kind === "textLiteral") {
       let value = "";
       const sorted = [...recs].sort((a, b) => a.fileName.localeCompare(b.fileName));
       for (const r of sorted) {
@@ -446,7 +446,7 @@ export async function rehydrateRuntimeOutputsFromArtifacts(
       continue;
     }
 
-    if (kind === "imagePrimitive") {
+    if (kind === "imagePrimitive" || kind === "imageLiteral") {
       let url: string | undefined;
       for (const r of recs) {
         if (r.fileName.includes("-still.")) {
