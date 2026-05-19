@@ -11,6 +11,7 @@ import {
 } from "react";
 
 import type { StoredImageAsset, WorkflowDocument } from "@/lib/workflow/schema";
+import { ensureComposerReferencesOnCanvas } from "@/lib/workflow/workflow-canvas-agent";
 import type { WorkflowAgentStreamEvent } from "@/lib/workflow/workflow-agent";
 
 const MAX_COMPOSER_IMAGES = 8;
@@ -343,6 +344,10 @@ export function WorkflowAgentPanel({
 
     const apiPayload = [...priorForApi, { role: "user" as const, content: displayContent }];
     const workflow = getCanvasSnapshot();
+    const workflowForAgent =
+      attachmentsToSend.length > 0
+        ? ensureComposerReferencesOnCanvas(workflow ?? null, attachmentsToSend)
+        : workflow;
 
     const finalizeSuccess = async (body: AgentResponse & { workflow: WorkflowDocument }) => {
       setAgentActivityFatalError(false);
@@ -368,6 +373,15 @@ export function WorkflowAgentPanel({
     };
 
     try {
+      if (
+        workflowForAgent &&
+        attachmentsToSend.length > 0 &&
+        workflowForAgent !== workflow
+      ) {
+        await onApplyDocument(workflowForAgent);
+        onStatus("Reference images placed on canvas…");
+      }
+
       const res = await fetch("/api/workflow/agent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -375,7 +389,7 @@ export function WorkflowAgentPanel({
           messages: apiPayload,
           stream: true,
           ...(attachmentsToSend.length ? { composerImages: attachmentsToSend } : {}),
-          ...(workflow ? { workflow } : {}),
+          ...(workflowForAgent ? { workflow: workflowForAgent } : {}),
         }),
       });
 
@@ -608,7 +622,7 @@ export function WorkflowAgentPanel({
               Posts workflow agent
             </p>
             <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
-              Describe hooks and creatives; paste or attach reference images — they load into the Brief / posts node after send. Runs use fal still-image generation plus optional captions.
+              Paste or attach reference images, then send — they appear immediately as Image (merge) blocks on the canvas so the agent can wire them. After the graph is built, still/video blocks use those stills as fal references.
             </p>
           </div>
           <div

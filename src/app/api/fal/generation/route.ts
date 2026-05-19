@@ -3,6 +3,14 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getFalImageCaptionEndpointId } from "@/lib/fal/generation-models";
+import {
+  logFalGenerationError,
+  logFalGenerationRequest,
+  logFalGenerationSuccess,
+  summarizeMediaRef,
+  summarizeMediaRefs,
+  truncateForLog,
+} from "@/lib/fal/generation-request-log";
 import { resolveImageUrlForFal } from "@/lib/fal/resolve-image-url";
 import {
   assertSafeFalEndpointId,
@@ -26,23 +34,31 @@ import {
   VIDEO_RESOLUTIONS,
 } from "@/lib/workflow/schema";
 
+const logMetaSchema = {
+  logNodeId: z.string().max(64).optional(),
+  logLabel: z.string().max(200).optional(),
+};
+
 const bodySchema = z.discriminatedUnion("intent", [
   z.object({
     intent: z.literal("text-to-image"),
     prompt: z.string().min(1).max(4000),
     imageSize: falFluxPresetSizeSchema,
     numInferenceSteps: z.number().min(1).max(12),
+    ...logMetaSchema,
   }),
   z.object({
     intent: z.literal("image-to-image-edit"),
     prompt: z.string().min(1).max(4000),
     imageSize: falFluxPresetSizeSchema,
     imageUrls: z.array(z.string().min(10).max(25 * 1024 * 1024)).min(1).max(4),
+    ...logMetaSchema,
   }),
   z.object({
     intent: z.literal("image-to-text"),
     /** https URL or data:image base64 (large refs uploaded to fal storage server-side). */
     imageUrl: z.string().min(10).max(25 * 1024 * 1024),
+    ...logMetaSchema,
   }),
   z.object({
     intent: z.literal("image-to-video"),
@@ -51,8 +67,18 @@ const bodySchema = z.discriminatedUnion("intent", [
     aspectRatio: z.enum(VIDEO_ASPECT_RATIOS),
     resolution: z.enum(VIDEO_RESOLUTIONS),
     durationSec: z.number().int().min(VIDEO_DURATION_MIN_SEC).max(VIDEO_DURATION_MAX_SEC),
+    ...logMetaSchema,
   }),
 ]);
+
+type LogMeta = { logNodeId?: string; logLabel?: string };
+
+function extractLogMeta(payload: LogMeta): LogMeta {
+  return {
+    ...(payload.logNodeId ? { logNodeId: payload.logNodeId } : {}),
+    ...(payload.logLabel ? { logLabel: payload.logLabel } : {}),
+  };
+}
 
 function extractCaption(data: unknown): string | undefined {
   const r = (data as { results?: unknown }).results;
@@ -122,6 +148,7 @@ export async function POST(req: Request) {
   }
 
   const payload = parsed.data;
+  const logMeta = extractLogMeta(payload);
 
   try {
     fal.config({ credentials: process.env.FAL_KEY });
@@ -136,6 +163,18 @@ export async function POST(req: Request) {
           imageSize: payload.imageSize,
           numInferenceSteps: payload.numInferenceSteps,
         });
+        logFalGenerationRequest(
+          payload.intent,
+          {
+            endpointId,
+            queuePriority: priority,
+            imageSize: payload.imageSize,
+            numInferenceSteps: payload.numInferenceSteps,
+            prompt: truncateForLog(payload.prompt),
+            falInput: input,
+          },
+          logMeta,
+        );
         const result = await fal.subscribe(endpointId, {
           input,
           logs: true,
@@ -143,11 +182,17 @@ export async function POST(req: Request) {
         });
         const url = extractFalImagesUrl(result.data);
         if (!url) {
+          logFalGenerationError(payload.intent, "Fal did not return an image URL", logMeta);
           return NextResponse.json(
             { error: "Fal did not return an image URL" },
             { status: 502 },
           );
         }
+        logFalGenerationSuccess(
+          payload.intent,
+          { endpointId, resultImage: summarizeMediaRef(url) },
+          logMeta,
+        );
         return NextResponse.json({ image: { url } });
       }
       case "image-to-image-edit": {
@@ -161,6 +206,19 @@ export async function POST(req: Request) {
           imageSize: payload.imageSize,
           imageUrls: hostedUrls,
         });
+        logFalGenerationRequest(
+          payload.intent,
+          {
+            endpointId,
+            queuePriority: priority,
+            imageSize: payload.imageSize,
+            prompt: truncateForLog(payload.prompt),
+            referenceImages: summarizeMediaRefs(payload.imageUrls),
+            hostedReferences: summarizeMediaRefs(hostedUrls),
+            falInput: input,
+          },
+          logMeta,
+        );
         const result = await fal.subscribe(endpointId, {
           input,
           logs: true,
@@ -168,16 +226,31 @@ export async function POST(req: Request) {
         });
         const url = extractFalImagesUrl(result.data);
         if (!url) {
+          logFalGenerationError(payload.intent, "Fal did not return an image URL", logMeta);
           return NextResponse.json(
             { error: "Fal did not return an image URL" },
             { status: 502 },
           );
         }
+        logFalGenerationSuccess(
+          payload.intent,
+          { endpointId, resultImage: summarizeMediaRef(url) },
+          logMeta,
+        );
         return NextResponse.json({ image: { url } });
       }
       case "image-to-text": {
         const endpointId = getFalImageCaptionEndpointId();
         assertSafeFalEndpointId(endpointId);
+        logFalGenerationRequest(
+          payload.intent,
+          {
+            endpointId,
+            queuePriority: priority,
+            image: summarizeMediaRef(payload.imageUrl),
+          },
+          logMeta,
+        );
         const hostedUrl = await resolveImageUrlForFal(payload.imageUrl);
         const result = await fal.subscribe(endpointId, {
           input: { image_url: hostedUrl },
@@ -186,11 +259,21 @@ export async function POST(req: Request) {
         });
         const caption = extractCaption(result.data)?.trim();
         if (!caption) {
+          logFalGenerationError(payload.intent, "Fal did not return caption text", logMeta);
           return NextResponse.json(
             { error: "Fal did not return caption text" },
             { status: 502 },
           );
         }
+        logFalGenerationSuccess(
+          payload.intent,
+          {
+            endpointId,
+            captionPreview: truncateForLog(caption, 280),
+            captionLength: caption.length,
+          },
+          logMeta,
+        );
         return NextResponse.json({ text: caption });
       }
       case "image-to-video": {
@@ -204,6 +287,20 @@ export async function POST(req: Request) {
           resolution: payload.resolution,
           durationSec: payload.durationSec,
         });
+        logFalGenerationRequest(
+          payload.intent,
+          {
+            endpointId,
+            aspectRatio: payload.aspectRatio,
+            resolution: payload.resolution,
+            durationSec: payload.durationSec,
+            prompt: truncateForLog(payload.prompt),
+            sourceImage: summarizeMediaRef(payload.imageUrl),
+            hostedSourceImage: summarizeMediaRef(hostedUrl),
+            falInput: input,
+          },
+          logMeta,
+        );
         const result = await fal.subscribe(endpointId, {
           input,
           logs: true,
@@ -211,11 +308,17 @@ export async function POST(req: Request) {
         });
         const url = extractFalVideoUrl(result.data);
         if (!url) {
+          logFalGenerationError(payload.intent, "Fal did not return a video URL", logMeta);
           return NextResponse.json(
             { error: "Fal did not return a video URL" },
             { status: 502 },
           );
         }
+        logFalGenerationSuccess(
+          payload.intent,
+          { endpointId, resultVideo: summarizeMediaRef(url) },
+          logMeta,
+        );
         return NextResponse.json({ video: { url } });
       }
       default: {
@@ -225,6 +328,7 @@ export async function POST(req: Request) {
     }
   } catch (e) {
     const message = formatFalClientError(e);
+    logFalGenerationError(payload.intent, message, logMeta);
     return NextResponse.json({ error: message }, { status: 502 });
   }
 }

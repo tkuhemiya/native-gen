@@ -121,6 +121,9 @@ export function WorkflowEditor() {
   const [liveOutputs, setLiveOutputs] = useState<RuntimeOutputs | null>(null);
   const [runPhase, setRunPhase] = useState<WorkflowRunPhase>("idle");
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
+  const [generatingNodeIds, setGeneratingNodeIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
 
   const importRef = useRef<HTMLInputElement>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
@@ -155,9 +158,10 @@ export function WorkflowEditor() {
       outputs: lastOutputs,
       liveOutputs,
       activeNodeId,
+      generatingNodeIds,
       phase: runPhase,
     }),
-    [lastOutputs, liveOutputs, activeNodeId, runPhase],
+    [lastOutputs, liveOutputs, activeNodeId, generatingNodeIds, runPhase],
   );
 
   const closeContextMenu = useCallback(() => {
@@ -589,6 +593,7 @@ export function WorkflowEditor() {
     setLiveOutputs({});
     setRunPhase("running");
     setActiveNodeId(null);
+    setGeneratingNodeIds(new Set());
     try {
       const reuseOutputs =
         outputsSnapshotBeforeRunRef.current &&
@@ -609,8 +614,13 @@ export function WorkflowEditor() {
           },
           onProgress: (p) => {
             setStatus(p.message ?? p.phase);
-            // Highlight the node currently executing (before slow fal/export work finishes).
-            if (p.step?.nodeId) setActiveNodeId(p.step.nodeId);
+            const running = p.step?.runningNodeIds;
+            if (running && running.length > 0) {
+              setGeneratingNodeIds(new Set(running));
+              setActiveNodeId(running.length === 1 ? running[0]! : null);
+            } else if (p.step?.nodeId) {
+              setActiveNodeId(p.step.nodeId);
+            }
           },
           onNodeComplete: (e) => {
             partialRunOutputsRef.current = {
@@ -621,6 +631,12 @@ export function WorkflowEditor() {
               ...(prev ?? {}),
               [e.nodeId]: e.output,
             }));
+            setGeneratingNodeIds((prev) => {
+              if (!prev.has(e.nodeId)) return prev;
+              const next = new Set(prev);
+              next.delete(e.nodeId);
+              return next;
+            });
             setActiveNodeId(e.nodeId);
             void persistWorkflowRunArtifacts(
               workflowId,
@@ -635,6 +651,7 @@ export function WorkflowEditor() {
       setLastOutputs(outputs);
       setLiveOutputs(outputs);
       setActiveNodeId(null);
+      setGeneratingNodeIds(new Set());
       setRunPhase("done");
       setStatus("Run finished");
       logWorkflow("info", "WorkflowEditor", "Run finished OK", {
@@ -674,6 +691,7 @@ export function WorkflowEditor() {
         restoredMediaForWorkflowRef.current = null;
       }
       setActiveNodeId(null);
+      setGeneratingNodeIds(new Set());
       setStatus(ge.message);
     }
   };

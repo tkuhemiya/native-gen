@@ -90,6 +90,36 @@ export function topologicalOrder(
   return ordered;
 }
 
+/** Stable left-to-right tie-break for equally-ready nodes (canvas layout). */
+export function sortNodeIdsPreferLeft(
+  ids: string[],
+  nodesById: Map<string, WorkflowNode>,
+): void {
+  ids.sort((a, b) => {
+    const na = nodesById.get(a)!;
+    const nb = nodesById.get(b)!;
+    if (na.position.x !== nb.position.x) return na.position.x - nb.position.x;
+    if (na.position.y !== nb.position.y) return na.position.y - nb.position.y;
+    return a.localeCompare(b);
+  });
+}
+
+/** In-degree and outgoing adjacency for DAG scheduling. */
+export function buildWorkflowInDegrees(
+  nodes: WorkflowNode[],
+  edges: WorkflowEdge[],
+): { inDegree: Map<string, number>; outgoing: Map<string, string[]> } {
+  if (hasCycle(nodes, edges)) {
+    throw new GraphError("Workflow has a cycle — only DAGs are supported");
+  }
+  const { incoming, outgoing, ids } = buildAdjacency(nodes, edges);
+  const inDegree = new Map<string, number>();
+  for (const id of ids) {
+    inDegree.set(id, incoming.get(id)!.length);
+  }
+  return { inDegree, outgoing };
+}
+
 /**
  * Same as topological order for a DAG, but when several nodes are runnable,
  * prefers smaller `position.x` (then `y`, then id) so execution aligns with a
@@ -99,32 +129,14 @@ export function topologicalOrderPreferLeft(
   nodes: WorkflowNode[],
   edges: WorkflowEdge[],
 ): string[] {
-  if (hasCycle(nodes, edges)) {
-    throw new GraphError("Workflow has a cycle — only DAGs are supported");
-  }
-
   const byId = new Map(nodes.map((n) => [n.id, n]));
-  const { incoming, outgoing, ids } = buildAdjacency(nodes, edges);
-  const inDegree = new Map<string, number>();
-  for (const id of ids) {
-    inDegree.set(id, incoming.get(id)!.length);
-  }
-
-  function sortReady(ready: string[]) {
-    ready.sort((a, b) => {
-      const na = byId.get(a)!;
-      const nb = byId.get(b)!;
-      if (na.position.x !== nb.position.x) return na.position.x - nb.position.x;
-      if (na.position.y !== nb.position.y) return na.position.y - nb.position.y;
-      return a.localeCompare(b);
-    });
-  }
+  const { inDegree, outgoing } = buildWorkflowInDegrees(nodes, edges);
 
   const ready: string[] = [];
   for (const [id, deg] of inDegree) {
     if (deg === 0) ready.push(id);
   }
-  sortReady(ready);
+  sortNodeIdsPreferLeft(ready, byId);
 
   const ordered: string[] = [];
   while (ready.length) {
@@ -135,16 +147,56 @@ export function topologicalOrderPreferLeft(
       inDegree.set(next, nextDeg);
       if (nextDeg === 0) {
         ready.push(next);
-        sortReady(ready);
+        sortNodeIdsPreferLeft(ready, byId);
       }
     }
   }
 
-  if (ordered.length !== ids.size) {
+  if (ordered.length !== inDegree.size) {
     throw new GraphError("Unable to order workflow (unexpected cycle or mismatch)");
   }
 
   return ordered;
+}
+
+/**
+ * Topological layers: nodes in each wave can run concurrently (all predecessors
+ * are in earlier waves). Tie-breaking matches {@link topologicalOrderPreferLeft}.
+ */
+export function topologicalWavesPreferLeft(
+  nodes: WorkflowNode[],
+  edges: WorkflowEdge[],
+): string[][] {
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const { inDegree, outgoing } = buildWorkflowInDegrees(nodes, edges);
+  const remaining = new Map(inDegree);
+  const waves: string[][] = [];
+
+  let ready: string[] = [];
+  for (const [id, deg] of remaining) {
+    if (deg === 0) ready.push(id);
+  }
+  sortNodeIdsPreferLeft(ready, byId);
+
+  while (ready.length > 0) {
+    waves.push([...ready]);
+    const nextReady: string[] = [];
+    for (const id of ready) {
+      for (const next of outgoing.get(id) ?? []) {
+        const nextDeg = remaining.get(next)! - 1;
+        remaining.set(next, nextDeg);
+        if (nextDeg === 0) nextReady.push(next);
+      }
+    }
+    sortNodeIdsPreferLeft(nextReady, byId);
+    ready = nextReady;
+  }
+
+  if (waves.flat().length !== inDegree.size) {
+    throw new GraphError("Unable to order workflow (unexpected cycle or mismatch)");
+  }
+
+  return waves;
 }
 
 /** Incoming edges keyed by target node id (order preserved: first occurrence appends). */

@@ -2,7 +2,7 @@ import {
   assertConnectedDAG,
   GraphError,
   sortedIncomingClipEdgesForJoin,
-  topologicalOrderPreferLeft,
+  topologicalWavesPreferLeft,
 } from "./graph";
 import {
   type GenerationPlan,
@@ -39,7 +39,13 @@ export type RuntimeOutputs = Record<
 export type RunProgress = {
   phase: "idle" | "running" | "done" | "error";
   message?: string;
-  step?: { index: number; total: number; nodeId: string };
+  step?: {
+    index: number;
+    total: number;
+    nodeId: string;
+    /** Set when multiple generation nodes run in the same wave. */
+    runningNodeIds?: string[];
+  };
 };
 
 export type NodeRunComplete = {
@@ -56,9 +62,13 @@ export type AssembleBridgeFailureInfo = {
   message: string;
 };
 
+const DEFAULT_MAX_CONCURRENT_GENERATIONS = 8;
+
 export type RunWorkflowOptions = {
   onProgress?: (p: RunProgress) => void;
   onNodeComplete?: (e: NodeRunComplete) => void;
+  /** Cap parallel fal still / video jobs per wave. Default 8. */
+  maxConcurrentGenerations?: number;
   reuseOutputs?: RuntimeOutputs;
   /**
    * When server assembly hits an unsupported bridge gap, choose retry/cut/abort.
@@ -258,14 +268,22 @@ function extractFalProxyErrorMessage(
   return `Generation failed (${httpStatus})`;
 }
 
+type FalGenerationLogMeta = {
+  logNodeId: string;
+  logLabel: string;
+};
+
 /** POST /api/fal/generation — surfaces network failures and HTTP status in GraphError messages. */
-async function fetchFalGenerationJson(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function fetchFalGenerationJson(
+  body: Record<string, unknown>,
+  log?: FalGenerationLogMeta,
+): Promise<Record<string, unknown>> {
   let res: Response;
   try {
     res = await fetch("/api/fal/generation", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify(log ? { ...body, ...log } : body),
     });
   } catch (e) {
     const net = e instanceof Error ? e.message : String(e);
@@ -397,6 +415,30 @@ async function assembleClipsWithBridgeHandling(
   }
 }
 
+function isParallelGenerationKind(kind: WorkflowNode["data"]["kind"]): boolean {
+  return kind === "generationBlock" || kind === "videoBlock";
+}
+
+async function runWithConcurrencyLimit<T>(
+  tasks: (() => Promise<T>)[],
+  limit: number,
+): Promise<T[]> {
+  if (tasks.length === 0) return [];
+  const results = new Array<T>(tasks.length);
+  let nextIndex = 0;
+  async function worker() {
+    while (true) {
+      const i = nextIndex;
+      nextIndex += 1;
+      if (i >= tasks.length) return;
+      results[i] = await tasks[i]!();
+    }
+  }
+  const pool = Math.min(Math.max(1, limit), tasks.length);
+  await Promise.all(Array.from({ length: pool }, () => worker()));
+  return results;
+}
+
 export async function runWorkflowDAG(
   nodes: WorkflowNode[],
   edges: WorkflowEdge[],
@@ -406,8 +448,13 @@ export async function runWorkflowDAG(
     throw new GraphError("Add at least one node before running");
   }
 
-  const { onProgress, onNodeComplete, reuseOutputs: reuseOutputsRaw, onAssembleBridgeFailure } =
-    options;
+  const {
+    onProgress,
+    onNodeComplete,
+    reuseOutputs: reuseOutputsRaw,
+    onAssembleBridgeFailure,
+    maxConcurrentGenerations = DEFAULT_MAX_CONCURRENT_GENERATIONS,
+  } = options;
   const reuseOutputs =
     reuseOutputsRaw && Object.keys(reuseOutputsRaw).length > 0
       ? reuseOutputsRaw
@@ -420,8 +467,8 @@ export async function runWorkflowDAG(
   });
 
   assertConnectedDAG(nodes, edges);
-  const order = topologicalOrderPreferLeft(nodes, edges);
-  const totalSteps = order.length;
+  const waves = topologicalWavesPreferLeft(nodes, edges);
+  const totalSteps = nodes.length;
   const nodesById = new Map(nodes.map((n) => [n.id, n]));
   const incomingByTarget = new Map<string, WorkflowEdge[]>();
   for (const e of edges) {
@@ -431,23 +478,19 @@ export async function runWorkflowDAG(
   }
 
   const outputs: RuntimeOutputs = {};
+  let completedCount = 0;
 
   onProgress?.({ phase: "running", message: "Executing workflow…" });
 
-  for (let step = 0; step < order.length; step++) {
-    const id = order[step]!;
+  async function runNode(id: string): Promise<{
+    output: RuntimeOutputs[string];
+    reused?: boolean;
+  }> {
     const node = nodesById.get(id)!;
     const data = node.data;
     const label = runLabel(node);
-    onProgress?.({
-      phase: "running",
-      message: `${step + 1}/${totalSteps} · ${label}`,
-      step: { index: step + 1, total: totalSteps, nodeId: id },
-    });
 
     logWorkflow("debug", "runner/node", "Visit node", {
-      step: step + 1,
-      total: totalSteps,
       nodeId: id,
       kind: data.kind,
       label,
@@ -461,17 +504,7 @@ export async function runWorkflowDAG(
           reuseOutputs[id]?.type === "text" &&
           reuseOutputs[id].value.trim()
         ) {
-          const cached = reuseOutputs[id];
-          outputs[id] = cached;
-          onNodeComplete?.({
-            nodeId: id,
-            index: step + 1,
-            total: totalSteps,
-            label,
-            output: cached,
-            reused: true,
-          });
-          break;
+          return { output: reuseOutputs[id], reused: true };
         }
         let value: string;
         if (data.locked) {
@@ -482,31 +515,14 @@ export async function runWorkflowDAG(
           const chunks = [upstream, data.prompt.trim(), data.value.trim()].filter(Boolean);
           value = chunks.join("\n\n").trim() || data.value.trim();
         }
-        outputs[id] = { type: "text", value };
-        onNodeComplete?.({
-          nodeId: id,
-          index: step + 1,
-          total: totalSteps,
-          label,
-          output: outputs[id],
-        });
-        break;
+        return { output: { type: "text", value } };
       }
       case "imagePrimitive": {
         const localUrl = data.image?.dataUrl;
         if (data.locked && reuseOutputs && reuseOutputs[id]?.type === "image") {
           const cached = reuseOutputs[id];
           if (cached.url?.trim()) {
-            outputs[id] = cached;
-            onNodeComplete?.({
-              nodeId: id,
-              index: step + 1,
-              total: totalSteps,
-              label,
-              output: cached,
-              reused: true,
-            });
-            break;
+            return { output: cached, reused: true };
           }
         }
         if (data.locked) {
@@ -516,15 +532,7 @@ export async function runWorkflowDAG(
               `Image primitive “${label}” is locked and needs an uploaded still (upstream image merge is disabled)`,
             );
           }
-          outputs[id] = { type: "image", url: url.trim() };
-          onNodeComplete?.({
-            nodeId: id,
-            index: step + 1,
-            total: totalSteps,
-            label,
-            output: outputs[id],
-          });
-          break;
+          return { output: { type: "image", url: url.trim() } };
         }
         const upstreamUrls = collectUpstreamImageUrls(id, incomingByTarget, outputs);
         const url = (localUrl && localUrl.trim()) || upstreamUrls[0];
@@ -533,15 +541,7 @@ export async function runWorkflowDAG(
             `Image primitive “${label}” needs an uploaded still or an upstream generated image wired to its image pin`,
           );
         }
-        outputs[id] = { type: "image", url: url.trim() };
-        onNodeComplete?.({
-          nodeId: id,
-          index: step + 1,
-          total: totalSteps,
-          label,
-          output: outputs[id],
-        });
-        break;
+        return { output: { type: "image", url: url.trim() } };
       }
       case "sceneCompose": {
         if (
@@ -549,17 +549,7 @@ export async function runWorkflowDAG(
           reuseOutputs &&
           reuseOutputs[id]?.type === "sceneContext"
         ) {
-          const cached = reuseOutputs[id];
-          outputs[id] = cached;
-          onNodeComplete?.({
-            nodeId: id,
-            index: step + 1,
-            total: totalSteps,
-            label,
-            output: cached,
-            reused: true,
-          });
-          break;
+          return { output: reuseOutputs[id], reused: true };
         }
         const script = collectScriptForScene(id, incomingByTarget, outputs);
         const imgA = collectOneImageForScenePin(
@@ -582,20 +572,14 @@ export async function runWorkflowDAG(
             `Scene “${label}” needs two stills wired to image A and image B pins`,
           );
         }
-        outputs[id] = {
-          type: "sceneContext",
-          script: script.trim(),
-          imageAUrl: imgA,
-          imageBUrl: imgB,
+        return {
+          output: {
+            type: "sceneContext",
+            script: script.trim(),
+            imageAUrl: imgA,
+            imageBUrl: imgB,
+          },
         };
-        onNodeComplete?.({
-          nodeId: id,
-          index: step + 1,
-          total: totalSteps,
-          label,
-          output: outputs[id],
-        });
-        break;
       }
       case "sceneJoin": {
         const clipEdges = sortedIncomingClipEdgesForJoin(id, edges);
@@ -619,15 +603,7 @@ export async function runWorkflowDAG(
           trans,
           onAssembleBridgeFailure,
         );
-        outputs[id] = { type: "video", url: assembledUrl };
-        onNodeComplete?.({
-          nodeId: id,
-          index: step + 1,
-          total: totalSteps,
-          label,
-          output: outputs[id],
-        });
-        break;
+        return { output: { type: "video", url: assembledUrl } };
       }
       case "outputBlock": {
         const vid = collectUpstreamVideoUrls(id, incomingByTarget, outputs)[0];
@@ -635,19 +611,13 @@ export async function runWorkflowDAG(
           const upstream = [...sortedIncomingEdges(id, incomingByTarget)]
             .map((e) => outputs[e.source])
             .find((o) => o?.type === "video");
-          outputs[id] = {
-            type: "video",
-            url: vid,
-            sourceImageUrl: upstream?.type === "video" ? upstream.sourceImageUrl : undefined,
+          return {
+            output: {
+              type: "video",
+              url: vid,
+              sourceImageUrl: upstream?.type === "video" ? upstream.sourceImageUrl : undefined,
+            },
           };
-          onNodeComplete?.({
-            nodeId: id,
-            index: step + 1,
-            total: totalSteps,
-            label,
-            output: outputs[id],
-          });
-          break;
         }
         const imgs = collectUpstreamImageUrls(id, incomingByTarget, outputs);
         const img = imgs[0];
@@ -656,15 +626,7 @@ export async function runWorkflowDAG(
             `Output “${label}” needs one upstream image or video wired to its media pin`,
           );
         }
-        outputs[id] = { type: "image", url: img };
-        onNodeComplete?.({
-          nodeId: id,
-          index: step + 1,
-          total: totalSteps,
-          label,
-          output: outputs[id],
-        });
-        break;
+        return { output: { type: "image", url: img } };
       }
       case "generationBlock": {
         const inL = incomingMediaLanes(id, incomingByTarget);
@@ -677,20 +639,11 @@ export async function runWorkflowDAG(
             cached?.type === "generation" &&
             generationCacheSatisfiesPlan(plan, cached)
           ) {
-            outputs[id] = cached;
             logWorkflow("info", "runner/node", "Skipped generation (locked + prior output)", {
               nodeId: id,
               label,
             });
-            onNodeComplete?.({
-              nodeId: id,
-              index: step + 1,
-              total: totalSteps,
-              label,
-              output: cached,
-              reused: true,
-            });
-            break;
+            return { output: cached, reused: true };
           }
         }
 
@@ -705,13 +658,17 @@ export async function runWorkflowDAG(
           data.suffix.trim() ||
           "Cinematic story still, cohesive world, emotionally readable moment";
 
+        const falLog: FalGenerationLogMeta = { logNodeId: id, logLabel: label };
+
         async function postGeneration(body: Record<string, unknown>) {
           const intent =
             typeof body.intent === "string" ? body.intent : "unknown";
           logWorkflow("info", "runner/fal", "Calling /api/fal/generation", {
             intent,
+            nodeId: id,
+            label,
           });
-          return fetchFalGenerationJson(body);
+          return fetchFalGenerationJson(body, falLog);
         }
 
         let textOut: string | undefined;
@@ -781,33 +738,17 @@ export async function runWorkflowDAG(
           }
         }
 
-        outputs[id] = {
-          type: "generation",
-          text: textOut,
-          imageUrl: imageUrlOut,
+        return {
+          output: {
+            type: "generation",
+            text: textOut,
+            imageUrl: imageUrlOut,
+          },
         };
-        onNodeComplete?.({
-          nodeId: id,
-          index: step + 1,
-          total: totalSteps,
-          label,
-          output: outputs[id],
-        });
-        break;
       }
       case "videoBlock": {
         if (data.locked && reuseOutputs && reuseOutputs[id]?.type === "video") {
-          const cached = reuseOutputs[id];
-          outputs[id] = cached;
-          onNodeComplete?.({
-            nodeId: id,
-            index: step + 1,
-            total: totalSteps,
-            label,
-            output: cached,
-            reused: true,
-          });
-          break;
+          return { output: reuseOutputs[id], reused: true };
         }
         const refImgs = collectUpstreamImageUrls(id, incomingByTarget, outputs);
         const sourceImageUrl = refImgs[0];
@@ -822,38 +763,105 @@ export async function runWorkflowDAG(
         const prompt = (promptParts.join("\n\n") || motion ||
           "smooth subtle motion, continuity-friendly camera move").slice(0, 4000);
 
-        const parsedBody = await fetchFalGenerationJson({
-          intent: "image-to-video",
-          prompt,
-          imageUrl: sourceImageUrl,
-          aspectRatio: data.aspectRatio,
-          resolution: data.resolution,
-          durationSec: data.durationSec,
-        });
+        const parsedBody = await fetchFalGenerationJson(
+          {
+            intent: "image-to-video",
+            prompt,
+            imageUrl: sourceImageUrl,
+            aspectRatio: data.aspectRatio,
+            resolution: data.resolution,
+            durationSec: data.durationSec,
+          },
+          { logNodeId: id, logLabel: label },
+        );
         const url =
           typeof (parsedBody.video as { url?: string } | undefined)?.url === "string"
             ? (parsedBody.video as { url: string }).url
             : undefined;
         if (!url) throw new GraphError("Video generation missing URL");
 
-        outputs[id] = {
-          type: "video",
-          url,
-          sourceImageUrl,
+        return {
+          output: {
+            type: "video",
+            url,
+            sourceImageUrl,
+          },
         };
-        onNodeComplete?.({
-          nodeId: id,
-          index: step + 1,
-          total: totalSteps,
-          label,
-          output: outputs[id],
-        });
-        break;
       }
       default: {
         const _never: never = data;
         return _never;
       }
+    }
+  }
+
+  function finishNode(
+    id: string,
+    result: { output: RuntimeOutputs[string]; reused?: boolean },
+  ) {
+    const label = runLabel(nodesById.get(id)!);
+    outputs[id] = result.output;
+    completedCount += 1;
+    onNodeComplete?.({
+      nodeId: id,
+      index: completedCount,
+      total: totalSteps,
+      label,
+      output: result.output,
+      reused: result.reused,
+    });
+  }
+
+  for (const wave of waves) {
+    const light = wave.filter(
+      (id) => !isParallelGenerationKind(nodesById.get(id)!.data.kind),
+    );
+    const heavy = wave.filter((id) =>
+      isParallelGenerationKind(nodesById.get(id)!.data.kind),
+    );
+
+    for (const id of light) {
+      const label = runLabel(nodesById.get(id)!);
+      onProgress?.({
+        phase: "running",
+        message: `${completedCount + 1}/${totalSteps} · ${label}`,
+        step: { index: completedCount + 1, total: totalSteps, nodeId: id },
+      });
+      finishNode(id, await runNode(id));
+    }
+
+    if (heavy.length === 0) continue;
+
+    const heavyLabels = heavy.map((id) => runLabel(nodesById.get(id)!));
+    const waveStart = completedCount + 1;
+    const waveEnd = completedCount + heavy.length;
+    onProgress?.({
+      phase: "running",
+      message:
+        heavy.length > 1
+          ? `${waveStart}–${waveEnd}/${totalSteps} · Generating ${heavy.length} in parallel (${heavyLabels.join(", ")})`
+          : `${waveStart}/${totalSteps} · ${heavyLabels[0]}`,
+      step: {
+        index: waveStart,
+        total: totalSteps,
+        nodeId: heavy[0]!,
+        runningNodeIds: heavy,
+      },
+    });
+
+    logWorkflow("info", "runner", "Parallel generation wave", {
+      nodeIds: heavy,
+      count: heavy.length,
+      maxConcurrentGenerations,
+    });
+
+    const heavyResults = await runWithConcurrencyLimit(
+      heavy.map((id) => async () => ({ id, ...(await runNode(id)) })),
+      maxConcurrentGenerations,
+    );
+
+    for (const { id, output, reused } of heavyResults) {
+      finishNode(id, { output, reused });
     }
   }
 

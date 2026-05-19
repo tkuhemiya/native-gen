@@ -9,8 +9,8 @@ import {
 } from "@xyflow/react";
 import { useMemo, useState, type ReactNode } from "react";
 import {
+  useIsNodeGenerating,
   useNodeRunOutput,
-  useWorkflowRunContext,
 } from "@/components/workflow/WorkflowRunContext";
 import {
   FAL_FLUX_IMAGE_SIZE_DIMENSIONS,
@@ -92,8 +92,7 @@ export function GenerationBlockNode(props: NodeProps<AppNode>) {
   const { updateNodeData } = useReactFlow();
   const edgesOut = useOutgoingHandleKinds(id);
   const runOut = useNodeRunOutput(id);
-  const { activeNodeId, phase } = useWorkflowRunContext();
-  const runningHere = phase === "running" && activeNodeId === id;
+  const generatingHere = useIsNodeGenerating(id);
 
   if (data.kind !== "generationBlock") return null;
 
@@ -105,8 +104,10 @@ export function GenerationBlockNode(props: NodeProps<AppNode>) {
 
   return (
     <div
-      className={`relative min-w-[260px] max-w-[340px] rounded-lg border border-border bg-card px-3 py-2 text-card-foreground shadow-sm${
-        runningHere ? " ring-2 ring-primary ring-offset-2 ring-offset-background" : ""
+      className={`relative min-w-[260px] max-w-[340px] rounded-lg bg-card px-3 py-2 text-card-foreground shadow-sm ${
+        generatingHere
+          ? "border-2 border-primary shadow-[0_0_14px_-2px] shadow-primary/45 animate-pulse"
+          : "border border-border"
       }`}
     >
       <NodeLockButton
@@ -237,6 +238,13 @@ export function GenerationBlockNode(props: NodeProps<AppNode>) {
           />
         </div>
       </div>
+
+      {generatingHere ? (
+        <div className="mt-2 flex items-center gap-2 rounded-md border border-primary/40 bg-primary/10 px-2 py-1.5 text-[10px] font-medium text-primary">
+          <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
+          Generating still…
+        </div>
+      ) : null}
 
       {runOut?.type === "generation" ? (
         <div className="mt-2 space-y-2 border-t border-border pt-2">

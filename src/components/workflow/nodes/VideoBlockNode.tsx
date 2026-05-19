@@ -4,8 +4,8 @@ import { Handle, Position, useReactFlow, type NodeProps } from "@xyflow/react";
 import { useEffect } from "react";
 
 import {
+  useIsNodeGenerating,
   useNodeRunOutput,
-  useWorkflowRunContext,
 } from "@/components/workflow/WorkflowRunContext";
 import type { AppNode } from "@/lib/workflow/app-node";
 import {
@@ -42,8 +42,7 @@ export function VideoBlockNode(props: NodeProps<AppNode>) {
   const { data, id } = props;
   const { updateNodeData } = useReactFlow();
   const runOut = useNodeRunOutput(id);
-  const { activeNodeId, phase } = useWorkflowRunContext();
-  const runningHere = phase === "running" && activeNodeId === id;
+  const generatingHere = useIsNodeGenerating(id);
 
   const isVideoBlock = data.kind === "videoBlock";
 
@@ -76,8 +75,10 @@ export function VideoBlockNode(props: NodeProps<AppNode>) {
 
   return (
     <div
-      className={`relative min-w-[260px] max-w-[320px] rounded-lg border border-border bg-card px-3 py-2 text-card-foreground shadow-sm${
-        runningHere ? " ring-2 ring-violet-500 ring-offset-2 ring-offset-background" : ""
+      className={`relative min-w-[260px] max-w-[320px] rounded-lg bg-card px-3 py-2 text-card-foreground shadow-sm ${
+        generatingHere
+          ? "border-2 border-violet-500 shadow-[0_0_14px_-2px] shadow-violet-500/45 animate-pulse"
+          : "border border-border"
       }`}
     >
       <NodeLockButton
@@ -203,7 +204,7 @@ export function VideoBlockNode(props: NodeProps<AppNode>) {
         </div>
       </div>
 
-      {runningHere ? (
+      {generatingHere ? (
         <div className="mt-2 flex items-center gap-2 rounded-md border border-violet-500/40 bg-violet-500/10 px-2 py-1.5 text-[10px] font-medium text-violet-700 dark:text-violet-300">
           <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-violet-500" />
           Rendering clip…

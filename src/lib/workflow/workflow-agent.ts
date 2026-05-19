@@ -10,6 +10,8 @@ import {
 } from "./schema";
 import { getWorkflowAgentSystemPrompt } from "./workflow-agent-system-prompt";
 import {
+  buildComposerReferenceHintForAgent,
+  ensureComposerReferencesOnCanvas,
   mergeComposerImagesIntoPrimaryImagePrimitive,
   stripWorkflowMediaForAgent,
   validateAndFinalizeWorkflowWrite,
@@ -223,7 +225,7 @@ function buildPlannerMessages(
     if (i === imageAnchorIndex && t.role === "user") {
       const text =
         t.content.trim() ||
-        "(User attached reference image(s); treat as story/visual reference — server fills empty imagePrimitive slots after a successful write.)";
+        "(User attached reference image(s); treat as story/visual reference — server places them on imagePrimitive nodes after a successful write, creating Reference blocks if needed.)";
       return {
         role: "user" as const,
         content: [
@@ -298,17 +300,22 @@ export async function generateWorkflowWithOpenAI(
   if (last.role !== "user") return { workflow: null };
 
   const briefForCompile = extractCampaignBriefFromDialog(workingDialog).trim() || "Campaign";
-  const canvasSnapshot = options.canvasSnapshot ?? null;
   const streamSink = options.streamSink;
   const composerAttachments =
     options.composerAttachments?.filter(
       (a) => typeof a.dataUrl === "string" && a.dataUrl.startsWith("data:image/"),
     ) ?? [];
 
+  let canvasSnapshot =
+    composerAttachments.length > 0
+      ? ensureComposerReferencesOnCanvas(options.canvasSnapshot ?? null, composerAttachments)
+      : (options.canvasSnapshot ?? null);
+
   const snapshotForPrompt = canvasSnapshot ? stripWorkflowMediaForAgent(canvasSnapshot) : null;
+  const composerRefHint = buildComposerReferenceHintForAgent(canvasSnapshot);
   const canvasBlock = snapshotForPrompt
-    ? `\n\n## Canvas snapshot (media binary stripped; empty arrays here still restore prior uploads per node id on save)\n\`\`\`json\n${JSON.stringify(snapshotForPrompt, null, 2)}\n\`\`\``
-    : `\n\n## Canvas snapshot\n_(empty — lay down a **wide** seven-layer story DAG: separate **Character** & **Place** \`textPrimitive\`s per canon element, **multiple** Scene + Layer-5 beats, **dense fan-in**; motion \u2192 usually **multiple** \`videoBlock\` + \`sceneJoin\` \u2192 \`outputBlock\` unless the user asked for **one-shot** or **outline-only**. **Do not** return a skeleton graph. Schema ${WORKFLOW_DOCUMENT_VERSION}; fresh uuids.)_`;
+    ? `\n\n## Canvas snapshot (media binary stripped; image primitives with attached refs are tagged in \`prompt\`)\n\`\`\`json\n${JSON.stringify(snapshotForPrompt, null, 2)}\n\`\`\`${composerRefHint}`
+    : `\n\n## Canvas snapshot\n_(empty — lay down a **wide** seven-layer story DAG: separate **Character** & **Place** \`textPrimitive\`s per canon element, **multiple** Scene + Layer-5 beats, **dense fan-in**; motion \u2192 usually **multiple** \`videoBlock\` + \`sceneJoin\` \u2192 \`outputBlock\` unless the user asked for **one-shot** or **outline-only**. **Do not** return a skeleton graph. Schema ${WORKFLOW_DOCUMENT_VERSION}; fresh uuids.)_${composerRefHint}`;
 
   const agentLog: string[] = [];
   const pushLog = (line: string) => {
